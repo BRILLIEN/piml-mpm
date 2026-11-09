@@ -1,0 +1,177 @@
+# -*- coding: utf-8 -*-
+"""
+多尺度数值形函数（粗尺度运动学基）—— 由粗单元内的粒子材料分布经局部凝聚得到。
+
+构造（细网格 h 上的二次 B 样条节点，粗化比 n，H = n h）
+--------------------------------------------------------
+* 粗节点 A 位于细节点坐标 ξ_A = nA + 0.5（以 h 为单位、相对细网格原点）。
+* 粗单元 A 覆盖 [nA+0.5, n(A+1)+0.5]；落在其中的粒子只与局部节点块 l ∈ [0, n+1]
+  （全局细节点 nA + l）相互作用（二次 B 样条支撑 3 个节点）。
+* 局部内部节点 l ∈ [2, n-1]（每方向 n-2 个），其刚度行**只**来自本粗单元内粒子；
+  环带 l ∈ {0,1,n,n+1} 作为 Dirichlet 边界，取本单元粗双线性插值值（可外推半个 h）。
+* 内部值：K_II Φ_I = −K_IB Φ_B（局部静力凝聚，线弹性，参数取粒子当前材料）。
+* 全局：骨架节点（每个粗单元的环带内侧两层 l∈{1,n} 及其相邻单元同位置）取全局双线性值；
+  内部节点取所在粗单元的局部解。
+
+数学性质（由构造保证，见 test_msbasis.py 数值检验）
+* 单位分解：Σ_J Φ_iJ = 1（各分量）。刚度行对常数场零化 + 边界值单位分解 ⇒ 内部单位分解。
+* 无穷小刚体转动精确再现：线性边界值 + 零应变场为局部问题精确解。
+* 均质粗单元内一次场精确再现；非均质单元内不再现（正是用来表征非均质性的部分）。
+* 细尺度粒子插值仍用 C1 二次 B 样条 N_i(x)，v(x)=Σ_i N_i(x) Σ_J Φ_iJ V_J，
+  因节点值单值，粒子层面的速度场仍 C1 连续 —— 粗化不重新引入 cell-crossing 梯度跳变。
+"""
+import numpy as np
+import scipy.sparse as sp
+from common.shape import shape_2d
+
+
+def coarse_grid(grid, n):
+    """粗网格：粗节点坐标与数目。"""
+    h = grid['h']; ox, oy = grid['origin']
+    ncx = (grid['nx'] - 1) // n + 1; ncy = (grid['ny'] - 1) // n + 1
+    xs = ox + h * (n * np.arange(ncx) + 0.5); ys = oy + h * (n * np.arange(ncy) + 0.5)
+    X, Y = np.meshgrid(xs, ys)
+    return dict(n=n, H=n * h, ncx=ncx, ncy=ncy, nc=ncx * ncy,
+                xc=np.stack([X.ravel(), Y.ravel()], 1), origin=(xs[0], ys[0]))
+
+
+def bilinear_global(grid, cg, nodes):
+    """细节点 nodes 处的全局粗双线性形函数，返回稀疏矩阵 (len(nodes), nc)。"""
+    h = grid['h']; n = cg['n']
+    i = nodes % grid['nx']; j = nodes // grid['nx']
+    sx = (i - 0.5) / n; sy = (j - 0.5) / n
+    ax = np.clip(np.floor(sx).astype(int), 0, cg['ncx'] - 2); ay = np.clip(np.floor(sy).astype(int), 0, cg['ncy'] - 2)
+    fx = sx - ax; fy = sy - ay
+    rows = np.repeat(np.arange(len(nodes)), 4)
+    cols = np.stack([ax + ay * cg['ncx'], ax + 1 + ay * cg['ncx'],
+                     ax + (ay + 1) * cg['ncx'], ax + 1 + (ay + 1) * cg['ncx']], 1).ravel()
+    vals = np.stack([(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy], 1).ravel()
+    return sp.csr_matrix((vals, (rows, cols)), shape=(len(nodes), cg['nc']))
+
+
+def local_layout(n):
+    """局部节点块 (n+2)^2 的内部/边界划分及边界处单元双线性值（与单元位置无关，所有单元共用）。"""
+    m = n + 2
+    lx, ly = np.meshgrid(np.arange(m), np.arange(m))
+    lx = lx.ravel(); ly = ly.ravel()
+    inner = (lx >= 2) & (lx <= n - 1) & (ly >= 2) & (ly <= n - 1)
+    I = np.where(inner)[0]; B = np.where(~inner)[0]
+    # 单元局部坐标 s ∈ [0,1]：粗节点在 l = 0.5 与 l = n + 0.5
+    sx = (lx - 0.5) / n; sy = (ly - 0.5) / n
+    W = np.stack([(1 - sx) * (1 - sy), sx * (1 - sy), (1 - sx) * sy, sx * sy], 1)   # (m², 4) 角点顺序 00,10,01,11
+    return dict(m=m, I=I, B=B, W=W)
+
+
+def particle_cells(xp, grid, n):
+    """粒子所属粗单元 (ax, ay) 及其 9 个支撑节点的局部编号。"""
+    h = grid['h']; ox, oy = grid['origin']
+    xi = (xp[:, 0] - ox) / h; eta = (xp[:, 1] - oy) / h
+    ax = np.floor((xi - 0.5) / n).astype(np.int64); ay = np.floor((eta - 0.5) / n).astype(np.int64)
+    bx = np.floor(xi - 0.5).astype(np.int64) - n * ax; by = np.floor(eta - 0.5).astype(np.int64) - n * ay
+    return ax, ay, bx, by
+
+
+def local_stiffness(xp, Vp, lam, mu, grid, n, cells_key, ax, ay, bx, by, chunk=200000):
+    """按粗单元批量组装局部线弹性刚度 Kc (ncell, 2m², 2m²)。局部自由度顺序：[ux(m²), uy(m²)]。"""
+    m = n + 2; m2 = m * m; nd = 2 * m2
+    ncell = len(cells_key)
+    _, inv = np.unique(ax + ay * 100003, return_inverse=True)   # 与 cells_key 对齐（调用方保证按同一规则排序）
+    K = np.zeros(ncell * nd * nd)
+    o = np.arange(3)
+    for s in range(0, len(xp), chunk):
+        e = slice(s, s + chunk)
+        _, N, dNx, dNy = shape_2d(xp[e], grid, 'qbspline')
+        lidx = ((bx[e, None, None] + o[None, None, :]) + (by[e, None, None] + o[None, :, None]) * m).reshape(-1, 9)
+        V = Vp[e][:, None, None]; L = lam[e][:, None, None]; M = mu[e][:, None, None]
+        gx_i = dNx[:, :, None]; gy_i = dNy[:, :, None]; gx_j = dNx[:, None, :]; gy_j = dNy[:, None, :]
+        # 平面应变线弹性：K_ab = ∫ B_a^T D B_b
+        Kxx = V * ((L + 2 * M) * gx_i * gx_j + M * gy_i * gy_j)
+        Kxy = V * (L * gx_i * gy_j + M * gy_i * gx_j)
+        Kyx = V * (L * gy_i * gx_j + M * gx_i * gy_j)
+        Kyy = V * ((L + 2 * M) * gy_i * gy_j + M * gx_i * gx_j)
+        base = inv[e][:, None, None] * (nd * nd)
+        ri = lidx[:, :, None]; cj = lidx[:, None, :]
+        for blk, (r0, c0) in ((Kxx, (0, 0)), (Kxy, (0, m2)), (Kyx, (m2, 0)), (Kyy, (m2, m2))):
+            flat = (base + (ri + r0) * nd + (cj + c0)).ravel()
+            K += np.bincount(flat, blk.ravel(), ncell * nd * nd)
+    return K.reshape(ncell, nd, nd)
+
+
+def raster_material(xp, Vp, lam, mu, grid):
+    """把粒子材料栅格化到细尺度 B 样条节点区间（以节点 k 为中心、边长 h 的方块）：
+    返回区间编号、体积占有率 φ 与体积加权 λ、μ。这是局部算子的"材料分布"输入。"""
+    h = grid['h']; ox, oy = grid['origin']; nx = grid['nx']
+    k = np.floor((xp[:, 0] - ox) / h + 0.5).astype(np.int64) + np.floor((xp[:, 1] - oy) / h + 0.5).astype(np.int64) * nx
+    span, inv = np.unique(k, return_inverse=True)
+    vol = np.bincount(inv, Vp); phi = np.minimum(vol / h ** 2, 1.0)
+    lam_s = np.bincount(inv, Vp * lam) / vol; mu_s = np.bincount(inv, Vp * mu) / vol
+    return span, phi, lam_s, mu_s
+
+
+def gauss_points(span, phi, lam_s, mu_s, grid):
+    """每个区间 3x3 Gauss 点（作为"伪粒子"），体积 = φ h² × 权重。"""
+    h = grid['h']; xn = grid['xn']
+    g = np.array([-0.5 * np.sqrt(0.6), 0.0, 0.5 * np.sqrt(0.6)]); w = np.array([5, 8, 5]) / 18.0
+    GX, GY = np.meshgrid(g, g); WW = np.outer(w, w)
+    xq = (xn[span][:, None, :] + h * np.stack([GX.ravel(), GY.ravel()], 1)[None]).reshape(-1, 2)
+    Vq = (phi[:, None] * h ** 2 * WW.ravel()[None]).ravel()
+    return xq, Vq, np.repeat(lam_s, 9), np.repeat(mu_s, 9)
+
+
+def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='gauss'):
+    """构造全局多尺度基 Φ（稀疏，(2nn, 2nc)，自由度顺序 [ux 全部节点, uy 全部节点]）。
+    quad='particle'：局部刚度直接用粒子积分（受粒子分布积分误差影响，一次场再现不精确）；
+    quad='gauss'   ：先把粒子材料栅格化到细区间，再用 3x3 Gauss 积分（零阶积分一致，均质区一次场精确再现）。"""
+    if quad == 'gauss':
+        xp, Vp, lam, mu = gauss_points(*raster_material(xp, Vp, lam, mu, grid), grid)
+    cg = coarse_grid(grid, n)
+    lay = local_layout(n)
+    m = lay['m']; m2 = m * m; I = lay['I']; B = lay['B']
+    ax, ay, bx, by = particle_cells(xp, grid, n)
+    assert ax.min() >= 0 and ay.min() >= 0 and n * (ax.max() + 1) + 1 < grid['nx'] and n * (ay.max() + 1) + 1 < grid['ny'], \
+        '粗单元局部节点块超出背景网格，请扩大网格 pad'
+    keys, first = np.unique(ax + ay * 100003, return_index=True)
+    cax = ax[first]; cay = ay[first]
+    Kc = local_stiffness(xp, Vp, lam, mu, grid, n, keys, ax, ay, bx, by)
+    # 局部自由度：内部 dI，边界 dB
+    dI = np.concatenate([I, I + m2]); dB = np.concatenate([B, B + m2])
+    KII = Kc[:, dI][:, :, dI]; KIB = Kc[:, dI][:, :, dB]
+    # 边界值（8 个粗自由度：4 角点 × 2 方向，顺序 [x00,x10,x01,x11, y00,...]）
+    WB = lay['W'][B]; nb = len(B)
+    PhiB = np.zeros((2 * nb, 8)); PhiB[:nb, :4] = WB; PhiB[nb:, 4:] = WB
+    diag = np.einsum('cii->ci', KII)
+    scale = diag.max(1, keepdims=True)
+    empty = diag < 1e-12 * scale                       # 无粒子支撑的内部节点
+    KII = KII + np.einsum('ci,ij->cij', empty * scale + 1e-14 * scale, np.eye(len(dI)))
+    rhs = -KIB @ PhiB
+    WI = lay['W'][I]; ni = len(I)
+    PhiI_bil = np.zeros((2 * ni, 8)); PhiI_bil[:ni, :4] = WI; PhiI_bil[ni:, 4:] = WI
+    rhs = rhs + (empty * scale)[:, :, None] * PhiI_bil[None]   # 空节点取双线性值
+    PhiI = np.linalg.solve(KII, rhs)                   # (ncell, 2ni, 8)
+    # ---- 组装全局 Φ ----
+    nx = grid['nx']; nn = grid['nn']; nc = cg['nc']
+    # 先全部节点取全局双线性，再覆盖有粒子的粗单元内部节点
+    Pb = bilinear_global(grid, cg, np.arange(nn)).tocoo()
+    inner_rows = []; inner_cols = []; inner_vals = []
+    lx = I % m; ly = I // m
+    gnode = (n * cax[:, None] + lx[None]) + (n * cay[:, None] + ly[None]) * nx      # (ncell, ni)
+    corners = np.stack([cax + cay * cg['ncx'], cax + 1 + cay * cg['ncx'],
+                        cax + (cay + 1) * cg['ncx'], cax + 1 + (cay + 1) * cg['ncx']], 1)  # (ncell,4)
+    ccol = np.concatenate([corners, corners + nc], 1)                                       # (ncell,8)
+    for comp in range(2):
+        rows = (gnode + comp * nn)[:, :, None].repeat(8, 2)
+        vals = PhiI[:, comp * ni:(comp + 1) * ni, :]
+        cols = ccol[:, None, :].repeat(ni, 1)
+        inner_rows.append(rows.ravel()); inner_cols.append(cols.ravel()); inner_vals.append(vals.ravel())
+    inner_rows = np.concatenate(inner_rows); inner_cols = np.concatenate(inner_cols); inner_vals = np.concatenate(inner_vals)
+    is_inner = np.zeros(2 * nn, bool); is_inner[inner_rows] = True
+    # 双线性部分（x、y 两个分量块）
+    br = np.concatenate([Pb.row, Pb.row + nn]); bc = np.concatenate([Pb.col, Pb.col + nc]); bv = np.concatenate([Pb.data, Pb.data])
+    keep = ~is_inner[br]
+    Phi = sp.csr_matrix((np.concatenate([bv[keep], inner_vals]),
+                         (np.concatenate([br[keep], inner_rows]), np.concatenate([bc[keep], inner_cols]))),
+                        shape=(2 * nn, 2 * nc))
+    out = dict(Phi=Phi, cg=cg, ncell=len(keys))
+    if return_local:
+        out.update(PhiI=PhiI, cax=cax, cay=cay, Kc=Kc, lay=lay)
+    return out
