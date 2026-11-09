@@ -21,3 +21,38 @@
   step    8360  t=2.6746e-01  Ek=8.1609e+01  Es=2.3368e+02  Etot=1.4625e+00
   step    8800  t=2.8153e-01  Ek=7.0048e+01  Es=2.6257e+02  Etot=1.6222e+00
   step    9240  t=2.9561e-01  Ek=5.7850e+01  Es=2.9102e+02  Etot=1.7946e+00
+  step    9680  t=3.0969e-01  Ek=4.5914e+01  Es=3.1838e+02  Etot=2.0032e+00
+  step   10120  t=3.2376e-01  Ek=3.4738e+01  Es=3.4390e+02  Etot=2.2295e+00
+  step   10560  t=3.3784e-01  Ek=2.4100e+01  Es=3.6704e+02  Etot=2.4450e+00
+  step   11000  t=3.5192e-01  Ek=1.4592e+01  Es=3.8662e+02  Etot=2.6111e+00
+  step   11440  t=3.6599e-01  Ek=7.0033e+00  Es=4.0131e+02  Etot=2.7108e+00
+  step   11880  t=3.8007e-01  Ek=2.3943e+00  Es=4.1006e+02  Etot=2.7512e+00
+  step   12320  t=3.9415e-01  Ek=7.5178e-01  Es=4.1277e+02  Etot=2.7481e+00
+--- 计时分解 os_piml_c100_n8_K50_agg1  总计 985.710 s ---
+  int_shape                 10.860 s    1.10 %
+  int_basis                301.301 s   30.57 %
+  int_mass                 152.162 s   15.44 %
+  int_extend                32.446 s    3.29 %
+  int_agg                    6.504 s    0.66 %
+  output                    53.494 s    5.43 %
+  step_gather              181.213 s   18.38 %
+  step_const                34.171 s    3.47 %
+  step_scatter              75.120 s    7.62 %
+  step_coarse              110.063 s   11.17 %
+  int_update                28.374 s    2.88 %
+保存 -> results/explicit/t13.json
+Traceback (most recent call last):
+  File "<stdin>", line 4, in <module>
+  File "/usr/local/lib/python3.13/shutil.py", line 428, in copy
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/shutil.py", line 260, in copyfile
+    with open(src, 'rb') as fsrc:
+         ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/explicit/t10_os_n8_K50.npz'
+方法                      nstep     总耗时s     加速比    e_tip e_tipmax      e_E   ΔE_end   e_xfin
+fine                    45291  7704.40    1.00   0.0000   0.0000   0.0000  -0.0128   0.0000
+os_n8_K50              失败: J<=0 或非有限，step 9309
+os_piml_c100_n8_K50    失败: J<=0 或非有限，step 9107
+os_piml_c100_n8_K50_agg1  12503   985.71    7.82   0.0137   0.0183   0.0131  +0.0066   0.0115
+DONE
