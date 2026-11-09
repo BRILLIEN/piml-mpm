@@ -1,0 +1,30 @@
+[I-beam] Np=8000，网格节点=24915，载荷步=10，粗化比=4
+===== pcg_2l_ms =====
+--- 计时分解 pcg_2l_ms  总计 15.755 s ---
+  shape                      0.026 s    0.16 %
+  pattern                    2.184 s   13.87 %
+  const                      0.119 s    0.75 %
+  resid                      0.091 s    0.57 %
+  tangent                    2.616 s   16.61 %
+  precond                    0.044 s    0.28 %
+  precond_basis              2.130 s   13.52 %
+  precond_coarse             0.800 s    5.08 %
+  precond_ilu                2.098 s   13.32 %
+  solve                      5.636 s   35.77 %
+  update                     0.012 s    0.07 %
+  总耗时 15.76s，Newton 总数 45，线性迭代总数 2348，自由端最终 y = -0.327966，与首个求解器的粒子位置 RMS 差 0.00e+00
+===== pcg_2l_os =====
+--- 计时分解 pcg_2l_os  总计 22.635 s ---
+  shape                      0.022 s    0.10 %
+  pattern                    1.861 s    8.22 %
+  const                      0.120 s    0.53 %
+  resid                      0.092 s    0.40 %
+  tangent                    2.556 s   11.29 %
+  precond                    0.084 s    0.37 %
+  precond_basis              7.989 s   35.30 %
+  precond_coarse             1.578 s    6.97 %
+  precond_ilu                2.040 s    9.01 %
+  solve                      6.283 s   27.76 %
+  update                     0.010 s    0.04 %
+  总耗时 22.64s，Newton 总数 45，线性迭代总数 2410，自由端最终 y = -0.327966，与首个求解器的粒子位置 RMS 差 4.37e-16
+保存 -> results/implicit/ios_1e7.json
