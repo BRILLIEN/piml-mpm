@@ -23,3 +23,11 @@
 
 ## 风险、阻塞、待确认
 - 工作区无远程仓库，容器回收会丢失成果；推送需用户授权。
+
+## 已设置的定时消息（发送至本会话，UTC+8）
+19:45 开始 trig_01HwdM5xUoKAUYGFF6nY5Du7；20:45 trig_01ASWo8Qfz4UEV3JMABuprEB；21:45 trig_01WukxVy8jCuRT1NfZBMntME；
+22:45 trig_01XCSPM9bxB4mFTQBQLxoa9u；23:45 trig_0179espSdSFHwmvQm53gHfoV；00:45 额度恢复 trig_015rbqdoMZB5fPS9prVFim8e；
+01:45 trig_01TEjvgqs8etpftSK1U1Wd4R；02:45 trig_01EK4afc8CFjo8yuEPxzM8Wi；03:45 trig_01E8FtvtzqZ881gRvPHyUDNi；
+04:45 trig_01Nqja6ccpS6DWYTAh6ATQCD；05:45 trig_0128AYAFBSWj1r2yGYERb4Em；06:45 trig_015yRX7uoqDuEt62jsES7rcm；
+07:45 trig_01U275AcbLmnmbSTQsi3gfEA；08:45 收尾 trig_01UF9sV9wB7kYFrncR2dMqvg；09:30 硬截止 trig_01DXpPdPHCRph4K3HUqRWVpK
+（如需取消：delete_trigger 对应 ID）
