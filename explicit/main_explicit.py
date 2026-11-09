@@ -43,7 +43,10 @@ def case_beam(cfg):
     lm, mm = lame(cfg['E_m'], cfg['nu_m']); li, mi = lame(cfg['E_i'], cfg['nu_i'])
     lam = np.where(ph == 1, li, lm); mu = np.where(ph == 1, mi, mm)
     Np = len(X)
-    P = dict(x=X, v=np.zeros((Np, 2)), m=np.full(Np, cfg['rho'] * Vp), V0=np.full(Np, Vp),
+    v0 = np.zeros((Np, 2))
+    if cfg.get('v0', 0.0):                       # 冲击型初速度场（类一阶振型 (x/L)^2）
+        v0[:, 1] = -cfg['v0'] * (X[:, 0] / L) ** 2
+    P = dict(x=X, v=v0, m=np.full(Np, cfg['rho'] * Vp), V0=np.full(Np, Vp),
              lam=lam, mu=mu, phase=ph)
     sx, sy = cfg['grid_shift']
     # 背景网格：原点取 ox = -(8*3+0.5)h，使粗化比 n∈{2,4,8} 时粗节点线恰位于固支面 x=0；
@@ -61,7 +64,14 @@ def case_beam(cfg):
     return P, grid, dict(dt=dt, gravity=cfg['gravity'], flip=cfg['flip'], fixed_nodes=fixed), mon, incl
 
 
-CASES = dict(beam=case_beam)
+def case_beam2(cfg):
+    """跨工况独立测试算例 E-beam2（PIML 模型不重新训练）：几何 L=0.8、H=0.25；夹杂种子/尺寸/体积分数/对比度均不同
+    （种子 7、半径 0.02–0.05、25%、对比度 30）；无重力，冲击型初速度 v_y = −3 (x/L)² m/s。"""
+    c = dict(cfg, L=0.8, H=0.25, seed=7, frac=0.25, rmin=0.02, rmax=0.05, E_i=3.0e7, gravity=(0.0, 0.0), v0=3.0)
+    return case_beam(c)
+
+
+CASES = dict(beam=case_beam, beam2=case_beam2)
 
 
 # =====================================================================

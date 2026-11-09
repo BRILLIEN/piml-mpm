@@ -67,6 +67,8 @@ def solver_setup(name, cfg):
         return 'pcg', twolevel_builder(n, 'qbspline'), {}
     if name == 'pcg_2l_ms':
         return 'pcg', twolevel_builder(n, 'ms'), {}
+    if name == 'pcg_2l_os':
+        return 'pcg', twolevel_builder(n, 'os'), {}
     if name == 'pcg_2l_piml':
         from ml.piml_basis import PIMLBasis
         return 'pcg', twolevel_builder(n, 'piml', model=PIMLBasis(f'ml/models/basis_n{n}.npz')), {}

@@ -31,6 +31,10 @@ def coarse_space(ctx, n, kind, extend=True, theta=0.3, coarse='qbspline'):
     if kind == 'ms':
         B = build_basis(ctx['x'], ctx['Vp'], ctx['lam'], ctx['mu'], grid, n, fixed_nodes=ctx['fixed_nodes'], coarse=coarse)
         Phi, cg_ = B['Phi'], B['cg']
+    elif kind == 'os':
+        from common.msbasis_os import build_basis_os
+        B = build_basis_os(ctx['x'], ctx['Vp'], ctx['lam'], ctx['mu'], grid, n, ctx['fixed_nodes'])
+        Phi, cg_ = B['Phi'], B['cg']
     elif kind == 'piml':
         from ml.piml_basis import build_basis_piml
         B = build_basis_piml(ctx['model'], ctx['x'], ctx['Vp'], ctx['lam'], ctx['mu'], grid, n, ctx['fixed_nodes'])
