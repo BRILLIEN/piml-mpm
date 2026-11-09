@@ -98,7 +98,7 @@ def main():
     net.save(f'ml/models/edge_n{a.n}_{a.etype}{a.suffix}.npz', meta)
     json.dump(dict(args=vars(a), t_images=t1 - t0, t_labels=t2 - t1, t_train=t4 - t3, hist=hist, flops=net.flops()),
               open(f'ml/models/edge_n{a.n}_{a.etype}{a.suffix}_log.json', 'w'), indent=1, default=float)
-    print(f'训练 {t4-t3:.1f}s；推理 {net.flops()/1e6:.2f} MFlop/边 -> ml/models/edge_n{a.n}_{a.etype}.npz')
+    print(f'训练 {t4-t3:.1f}s；推理 {net.flops()/1e6:.2f} MFlop/边 -> ml/models/edge_n{a.n}_{a.etype}{a.suffix}.npz')
 
 
 if __name__ == '__main__':
