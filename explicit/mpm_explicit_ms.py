@@ -58,7 +58,7 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
             from common.msbasis_os import build_basis_os
             from ml.train_edge import PIMLEdge
             if not hasattr(run_explicit_ms, '_edge_models'):
-                run_explicit_ms._edge_models = {e: PIMLEdge(f'ml/models/edge_n{n}_{e}.npz') for e in ('x', 'y')}
+                run_explicit_ms._edge_models = {e: PIMLEdge(f'ml/models/edge_n{n}_{e}{par.get("edge_suffix", "")}.npz') for e in ('x', 'y')}
             B = build_basis_os(x, Vcur, lam, mu, grid, n, fixed_nodes=par['fixed_nodes'],
                                edge_models=run_explicit_ms._edge_models)
         else:                                      # 对照：纯粗尺度双线性（不含非均质信息）

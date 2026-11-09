@@ -28,8 +28,8 @@ def strip_coarse(n, etype):
     return out
 
 
-def pair_images(N, n, etype, rng):
-    il, im = random_images(2 * N, n, rng)
+def pair_images(N, n, etype, rng, cmax=1000.0):
+    il, im = random_images(2 * N, n, rng, contrast_range=(1.0, cmax))
     ax = 0 if etype == 'x' else 1
     return np.concatenate([il[:N], il[N:]], ax + 1), np.concatenate([im[:N], im[N:]], ax + 1)
 
@@ -58,10 +58,12 @@ def main():
     ap.add_argument('--epochs', type=int, default=30)
     ap.add_argument('--batch', type=int, default=256)
     ap.add_argument('--lr', type=float, default=1e-3)
+    ap.add_argument('--cmax', type=float, default=1000.0, help='适用材料类别：两相刚度对比上限')
+    ap.add_argument('--suffix', default='')
     a = ap.parse_args()
     rng = np.random.default_rng(7 if a.etype == 'x' else 8)
     t0 = time.perf_counter()
-    IL, IM = pair_images(a.ntrain + a.ntest, a.n, a.etype, rng)
+    IL, IM = pair_images(a.ntrain + a.ntest, a.n, a.etype, rng, a.cmax)
     t1 = time.perf_counter()
     Wst = strip_coarse(a.n, a.etype)
     Y = np.concatenate([edge_solve_exact(IL[s:s + 1000], IM[s:s + 1000], a.n, a.etype) for s in range(0, len(IL), 1000)]) - Wst[None]
@@ -92,10 +94,10 @@ def main():
             print(f'  epoch {ep:3d}  测试 Δ条带相对误差 {rel:.4f}  条带值相对误差 {relS:.5f}', flush=True)
     t4 = time.perf_counter()
     os.makedirs('ml/models', exist_ok=True)
-    meta = dict(n=a.n, etype=a.etype, xm=xm.tolist(), xs=xs.tolist(), ys=ys, hidden=a.hidden)
-    net.save(f'ml/models/edge_n{a.n}_{a.etype}.npz', meta)
+    meta = dict(n=a.n, etype=a.etype, cmax=a.cmax, xm=xm.tolist(), xs=xs.tolist(), ys=ys, hidden=a.hidden)
+    net.save(f'ml/models/edge_n{a.n}_{a.etype}{a.suffix}.npz', meta)
     json.dump(dict(args=vars(a), t_images=t1 - t0, t_labels=t2 - t1, t_train=t4 - t3, hist=hist, flops=net.flops()),
-              open(f'ml/models/edge_n{a.n}_{a.etype}_log.json', 'w'), indent=1, default=float)
+              open(f'ml/models/edge_n{a.n}_{a.etype}{a.suffix}_log.json', 'w'), indent=1, default=float)
     print(f'训练 {t4-t3:.1f}s；推理 {net.flops()/1e6:.2f} MFlop/边 -> ml/models/edge_n{a.n}_{a.etype}.npz')
 
 
