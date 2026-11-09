@@ -51,7 +51,7 @@ def case_beam(cfg):
     ox = -24.5 * h + sx * h; oy = -0.7 * L - 20.5 * h + sy * h
     nx = int(np.ceil((1.2 * L - ox) / h)) + 20; ny = int(np.ceil((H + 0.2 * L - oy) / h)) + 20
     grid = make_grid(ox + 3 * h, ox + 3 * h + (nx - 7) * h, oy + 3 * h, oy + 3 * h + (ny - 7) * h, h)
-    fixed = np.where(grid['xn'][:, 0] <= 0.5 * h + 1e-9 * h)[0]   # x<=0.5h 的两列节点(-0.5h, 0.5h)及其左侧全部固定 -> 固支
+    fixed = np.where(grid['xn'][:, 0] <= 0.75 * h + 1e-9 * h)[0]  # x<=0.75h：任意网格偏移下至少两列节点固定 -> 固支（偏移 0 时即 -0.5h, 0.5h）
     cmax = np.sqrt((max(li, lm) + 2 * max(mi, mm)) / cfg['rho'])
     dt = cfg['cfl'] * h / cmax
     # 监测粒子：自由端中点、固支端上下表面附近（根部应力最大）
