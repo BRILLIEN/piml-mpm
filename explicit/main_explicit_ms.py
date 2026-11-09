@@ -50,6 +50,7 @@ def main():
     ap.add_argument('--basis', nargs='+', default=['ms', 'bilinear'])
     ap.add_argument('--dtfac', type=float, default=1.0, help='粗尺度时间步相对"同比例临界步"的额外系数')
     ap.add_argument('--skip_fine', action='store_true')
+    ap.add_argument('--edge_suffix', default='', help='PIML 边模型文件后缀（如 _c100）')
     ap.add_argument('--theta', type=float, default=0.3, help='小切割外推阈值（0 关闭）')
     ap.add_argument('--flip_ms', type=float, default=0.0, help='多尺度方法区间末粒子速度更新的 FLIP 比例（默认 0：PIC，仅在区间交界处传递一次）')
     ap.add_argument('--out_every', type=int, default=20)
@@ -77,9 +78,9 @@ def main():
             nstep = int(round(a.tend / dt)); dt = a.tend / nstep
             out_every = max(1, int(round(a.out_every * dt0 / dt)))
             for K in a.K:
-                name = f'{basis}_n{n}_K{K}'
+                name = f'{basis}{a.edge_suffix if basis.endswith("piml") else ""}_n{n}_K{K}'
                 print(f'[{name}] 临界步放大 {ratio:.2f}，dt={dt:.3e}，nstep={nstep}')
-                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms, extend=a.theta > 0, theta=a.theta)
+                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms, extend=a.theta > 0, theta=a.theta, edge_suffix=a.edge_suffix)
                 try:
                     R = run_explicit_ms(P, grid, par_r, n=n, K_int=K, basis=basis, monitor=mon)
                 except FloatingPointError as e:
