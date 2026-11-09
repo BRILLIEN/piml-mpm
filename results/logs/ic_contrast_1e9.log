@@ -1,0 +1,40 @@
+[I-beam] Np=8000，网格节点=24915，载荷步=10，粗化比=4
+===== direct =====
+--- 计时分解 direct  总计 28.688 s ---
+  shape                      0.026 s    0.09 %
+  pattern                    2.266 s    7.90 %
+  const                      0.143 s    0.50 %
+  resid                      0.099 s    0.34 %
+  tangent                    3.157 s   11.01 %
+  solve                     22.986 s   80.12 %
+  update                     0.012 s    0.04 %
+  总耗时 28.69s，Newton 总数 50，线性迭代总数 0，自由端最终 y = -0.135961，与首个求解器的粒子位置 RMS 差 0.00e+00
+===== pcg_2l_bil =====
+--- 计时分解 pcg_2l_bil  总计 68.121 s ---
+  shape                      0.024 s    0.03 %
+  pattern                    1.881 s    2.76 %
+  const                      0.134 s    0.20 %
+  resid                      0.096 s    0.14 %
+  tangent                    2.781 s    4.08 %
+  precond                    0.026 s    0.04 %
+  precond_basis             11.375 s   16.70 %
+  precond_coarse             0.364 s    0.53 %
+  precond_ilu                2.152 s    3.16 %
+  solve                     49.278 s   72.34 %
+  update                     0.011 s    0.02 %
+  总耗时 68.12s，Newton 总数 50，线性迭代总数 23069，自由端最终 y = -0.135961，与首个求解器的粒子位置 RMS 差 9.25e-17
+===== pcg_2l_ms =====
+--- 计时分解 pcg_2l_ms  总计 52.212 s ---
+  shape                      0.022 s    0.04 %
+  pattern                    2.006 s    3.84 %
+  const                      0.124 s    0.24 %
+  resid                      0.095 s    0.18 %
+  tangent                    2.773 s    5.31 %
+  precond                    0.043 s    0.08 %
+  precond_basis              3.519 s    6.74 %
+  precond_coarse             0.747 s    1.43 %
+  precond_ilu                2.031 s    3.89 %
+  solve                     40.842 s   78.22 %
+  update                     0.012 s    0.02 %
+  总耗时 52.22s，Newton 总数 50，线性迭代总数 18298，自由端最终 y = -0.135961，与首个求解器的粒子位置 RMS 差 1.57e-16
+保存 -> results/implicit/ic_contrast_1e9.json

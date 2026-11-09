@@ -67,6 +67,9 @@ def solver_setup(name, cfg):
         return 'pcg', twolevel_builder(n, 'qbspline'), {}
     if name == 'pcg_2l_ms':
         return 'pcg', twolevel_builder(n, 'ms'), {}
+    if name == 'pcg_2l_piml':
+        from ml.piml_basis import PIMLBasis
+        return 'pcg', twolevel_builder(n, 'piml', model=PIMLBasis(f'ml/models/basis_n{n}.npz')), {}
     if name == 'pcg_2l_ms_reuse':      # 同一载荷步内复用粗空间（粒子—网格映射在步内冻结，材料分布不变）
         return 'pcg', twolevel_builder(n, 'ms', P_cache={}), {}
     raise ValueError(name)
@@ -83,8 +86,9 @@ def main():
     ap.add_argument('--quiet', action='store_true')
     ap.add_argument('--fext', type=float, default=BASE['fine_extend'])
     ap.add_argument('--ls', action='store_true')
+    ap.add_argument('--Ei', type=float, default=BASE['E_i'], help='夹杂杨氏模量（对比度 = E_i/E_m）')
     a = ap.parse_args()
-    cfg = dict(BASE, h=a.h, nload=a.nload, n_coarse=a.n, gravity=(0.0, a.g), fine_extend=a.fext)
+    cfg = dict(BASE, h=a.h, nload=a.nload, n_coarse=a.n, gravity=(0.0, a.g), fine_extend=a.fext, E_i=a.Ei)
     P, grid, par = case_beam_static(cfg)
     par['linesearch'] = a.ls
     tag = a.tag or f'imp_h{a.h}_n{a.n}_L{a.nload}'

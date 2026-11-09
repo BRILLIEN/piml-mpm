@@ -31,6 +31,10 @@ def coarse_space(ctx, n, kind, extend=True, theta=0.3, coarse='qbspline'):
     if kind == 'ms':
         B = build_basis(ctx['x'], ctx['Vp'], ctx['lam'], ctx['mu'], grid, n, fixed_nodes=ctx['fixed_nodes'], coarse=coarse)
         Phi, cg_ = B['Phi'], B['cg']
+    elif kind == 'piml':
+        from ml.piml_basis import build_basis_piml
+        B = build_basis_piml(ctx['model'], ctx['x'], ctx['Vp'], ctx['lam'], ctx['mu'], grid, n, ctx['fixed_nodes'])
+        Phi, cg_ = B['Phi'], B['cg']
     else:
         cg_ = coarse_grid(grid, n)
         Pb = coarse_global(grid, cg_, np.arange(nn), kind).tolil(); Pb[ctx['fixed_nodes'], :] = 0
@@ -46,9 +50,12 @@ def coarse_space(ctx, n, kind, extend=True, theta=0.3, coarse='qbspline'):
     return P[:, nzc].tocsr()
 
 
-def twolevel_builder(n=4, kind='ms', drop_tol=1e-3, fill_factor=2.0, coarse='qbspline', P_cache=None):
-    """P_cache：dict，可在多次调用间复用粗空间（例如同一载荷步内各 Newton 迭代）——由调用方决定何时失效。"""
+def twolevel_builder(n=4, kind='ms', drop_tol=1e-3, fill_factor=2.0, coarse='qbspline', P_cache=None, model=None):
+    """P_cache：dict，可在多次调用间复用粗空间（例如同一载荷步内各 Newton 迭代）——由调用方决定何时失效。
+    model：kind='piml' 时的 PIMLBasis 模型。"""
     def build(K, ctx):
+        if model is not None:
+            ctx = dict(ctx, model=model)
         T = ctx.get('timer')
         if T: T.tic('precond_basis')
         if P_cache is not None and P_cache.get('P') is not None and P_cache.get('key') == id(ctx['fdofs']):

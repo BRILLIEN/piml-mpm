@@ -180,6 +180,50 @@ def images_to_gauss(cax, cay, img_l, img_m, grid, n):
     return xq, Vq, np.repeat(img_l.ravel(), 9), np.repeat(img_m.ravel(), 9)
 
 
+_TPL = {}
+
+
+def span_templates(n):
+    """细区间刚度模板（与 h 无关：二维 ∫∇N·∇N dA 量纲为 1）。返回 (tλ, tμ, flat)：
+    tλ, tμ 形状 (324,) 为单位 λ、单位 μ 时一个区间对其 3x3 节点（18 自由度）的刚度贡献；
+    flat (n², 324) 为各区间贡献在粗单元局部矩阵 (2m²)² 中的展平位置。"""
+    if n in _TPL:
+        return _TPL[n]
+    from common.shape import make_grid
+    g = make_grid(0, 4, 0, 4, 1.0, pad=0)
+    gq = np.array([-0.5 * np.sqrt(0.6), 0.0, 0.5 * np.sqrt(0.6)]); w = np.array([5, 8, 5]) / 18.0
+    GX, GY = np.meshgrid(gq, gq); W = np.outer(w, w).ravel()
+    xq = np.stack([2.0 + GX.ravel(), 2.0 + GY.ravel()], 1)          # 以节点 (2,2) 为中心的区间
+    idx, N, dNx, dNy = shape_2d(xq, g, 'qbspline')
+    assert np.all(idx == idx[0])
+    gx = dNx; gy = dNy; V = W[:, None, None]
+    gxi = gx[:, :, None]; gyi = gy[:, :, None]; gxj = gx[:, None, :]; gyj = gy[:, None, :]
+    # λ 部分：B^T [[1,1,0],[1,1,0],[0,0,0]] B；μ 部分：B^T diag(2,2,1) B
+    Lxx = (V * gxi * gxj).sum(0); Lxy = (V * gxi * gyj).sum(0); Lyx = (V * gyi * gxj).sum(0); Lyy = (V * gyi * gyj).sum(0)
+    Mxx = (V * (2 * gxi * gxj + gyi * gyj)).sum(0); Mxy = (V * gyi * gxj).sum(0)
+    Myx = (V * gxi * gyj).sum(0); Myy = (V * (2 * gyi * gyj + gxi * gxj)).sum(0)
+    tl = np.concatenate([Lxx, Lxy, Lyx, Lyy], axis=None); tm = np.concatenate([Mxx, Mxy, Myx, Myy], axis=None)
+    # 局部节点号：区间 (sy,sx) 中心局部节点 (sy+1, sx+1)，其 3x3 节点 (sy..sy+2, sx..sx+2)
+    m = n + 2; m2 = m * m; nd = 2 * m2
+    o = np.arange(3)
+    s = np.arange(n); SX, SY = np.meshgrid(s, s); SX = SX.ravel(); SY = SY.ravel()
+    loc = ((SX[:, None, None] + o[None, None, :]) + (SY[:, None, None] + o[None, :, None]) * m).reshape(n * n, 9)
+    ri = loc[:, :, None]; cj = loc[:, None, :]
+    blocks = [(0, 0), (0, m2), (m2, 0), (m2, m2)]
+    flat = np.concatenate([((ri + r0) * nd + (cj + c0)).reshape(n * n, 81) for r0, c0 in blocks], 1)
+    _TPL[n] = (tl, tm, flat)
+    return _TPL[n]
+
+
+def local_stiffness_images(img_l, img_m, n):
+    """由材料图像直接组装粗单元局部刚度（模板法，无形函数求值）。返回 (ncell, nd, nd)。"""
+    tl, tm, flat = span_templates(n)
+    nc = img_l.shape[0]; m = n + 2; nd = 2 * m * m
+    vals = img_l.reshape(nc, -1)[:, :, None] * tl[None, None, :] + img_m.reshape(nc, -1)[:, :, None] * tm[None, None, :]
+    pos = (np.arange(nc)[:, None, None] * (nd * nd) + flat[None]).ravel()
+    return np.bincount(pos, vals.ravel(), nc * nd * nd).reshape(nc, nd, nd)
+
+
 def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixed_nodes=None, ersatz=1e-3, coarse='qbspline'):
     """构造全局多尺度基 Φ（稀疏，(2nn, 2nc)，自由度顺序 [ux 全部节点, uy 全部节点]）。
     quad='particle'：局部刚度直接用粒子积分（受粒子分布积分误差影响，一次场再现不精确）；
@@ -188,7 +232,10 @@ def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixe
                      消除表面附近弱支撑节点导致的病态与基函数异常值。ersatz 只影响运动学基，不进入动力学内力。
     fixed_nodes    ：细尺度 Dirichlet（零位移）节点；在局部问题中作为零边界/零未知量施加，全局对应行置零，
                      使粗尺度空间精确满足细尺度位移边界条件。"""
-    if quad == 'image':      # 推荐：粗单元材料图像（含 ersatz 正则化）+ Gauss 积分
+    if quad == 'image':      # 推荐：粗单元材料图像（含 ersatz 正则化）+ 模板法局部刚度（等价于区间 3x3 Gauss 积分）
+        cax, cay, il, im, _ = cell_images(xp, Vp, lam, mu, grid, n, ersatz)
+        return basis_from_images(cax, cay, il, im, grid, n, fixed_nodes, coarse, return_local)
+    elif quad == 'image_gauss':   # 同上但用 Gauss 伪粒子逐点组装（验证模板法用）
         cax0, cay0, il, im, _ = cell_images(xp, Vp, lam, mu, grid, n, ersatz)
         xp, Vp, lam, mu = images_to_gauss(cax0, cay0, il, im, grid, n)
     elif quad == 'gauss':
@@ -202,6 +249,68 @@ def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixe
     keys, first = np.unique(ax + ay * 100003, return_index=True)
     cax = ax[first]; cay = ay[first]
     Kc = local_stiffness(xp, Vp, lam, mu, grid, n, keys, ax, ay, bx, by)
+    return basis_from_Kc(Kc, cax, cay, grid, n, fixed_nodes, coarse, return_local)
+
+
+def basis_from_images(cax, cay, il, im, grid, n, fixed_nodes=None, coarse='qbspline', return_local=False, PhiI=None):
+    """由粗单元材料图像构造全局基（模板法组装 + 局部凝聚）；若给定 PhiI（如 PIML 网络预测），跳过局部求解。"""
+    assert cax.min() >= 1 and cay.min() >= 1 and n * (cax.max() + 1) + 1 < grid['nx'] and n * (cay.max() + 1) + 1 < grid['ny'], \
+        '粗单元局部节点块超出背景网格，请扩大网格 pad'
+    Kc = None if PhiI is not None else local_stiffness_images(il, im, n)
+    return basis_from_Kc(Kc, cax, cay, grid, n, fixed_nodes, coarse, return_local, PhiI=PhiI)
+
+
+def local_phiB(n, coarse):
+    lay = local_layout(n, coarse)
+    nw = lay['W'].shape[1]; WB = lay['W'][lay['B']]; nb = len(lay['B'])
+    PhiB = np.zeros((2 * nb, 2 * nw)); PhiB[:nb, :nw] = WB; PhiB[nb:, nw:] = WB
+    WI = lay['W'][lay['I']]; ni = len(lay['I'])
+    PhiI_c = np.zeros((2 * ni, 2 * nw)); PhiI_c[:ni, :nw] = WI; PhiI_c[ni:, nw:] = WI
+    return lay, PhiB, PhiI_c
+
+
+def solve_local(Kc, n, coarse='qbspline', fI2=None, fB2=None):
+    """批量局部凝聚：返回 PhiI (ncell, 2ni, 32)。fI2/fB2 为固定（Dirichlet）内部/边界自由度掩码。"""
+    lay, PhiB, PhiI_bil = local_phiB(n, coarse)
+    m = lay['m']; m2 = m * m; I = lay['I']; B = lay['B']
+    dI = np.concatenate([I, I + m2]); dB = np.concatenate([B, B + m2])
+    KII = Kc[:, dI][:, :, dI]; KIB = Kc[:, dI][:, :, dB]
+    diag = np.einsum('cii->ci', KII)
+    scale = diag.max(1, keepdims=True)
+    empty = diag < 1e-12 * scale
+    KII = KII + np.einsum('ci,ij->cij', empty * scale + 1e-14 * scale, np.eye(len(dI)))
+    if fI2 is not None:
+        rhs = -np.einsum('cij,cjk->cik', KIB, (~fB2)[:, :, None] * PhiB[None])
+        KII = KII * (~fI2)[:, :, None] * (~fI2)[:, None, :] + np.einsum('ci,ij->cij', fI2 * scale, np.eye(len(dI)))
+        rhs = rhs * (~fI2)[:, :, None]
+        empty = empty & ~fI2
+    else:
+        rhs = -KIB @ PhiB
+    rhs = rhs + (empty * scale)[:, :, None] * PhiI_bil[None]
+    return np.linalg.solve(KII, rhs)
+
+
+def basis_from_Kc(Kc, cax, cay, grid, n, fixed_nodes=None, coarse='qbspline', return_local=False, PhiI=None):
+    cg = coarse_grid(grid, n)
+    lay = local_layout(n, coarse)
+    m = lay['m']; m2 = m * m; I = lay['I']; B = lay['B']
+    nxg = grid['nx']; ni = len(I); nn = grid['nn']; nc = cg['nc']
+    fI2 = fB2 = None
+    if fixed_nodes is not None:
+        isfix = np.zeros(grid['nn'], bool); isfix[fixed_nodes] = True
+        lxB = B % m; lyB = B // m; lxI = I % m; lyI = I // m
+        fB = isfix[(n * cax[:, None] + lxB[None]) + (n * cay[:, None] + lyB[None]) * nxg]
+        fI = isfix[(n * cax[:, None] + lxI[None]) + (n * cay[:, None] + lyI[None]) * nxg]
+        fB2 = np.concatenate([fB, fB], 1); fI2 = np.concatenate([fI, fI], 1)
+    if PhiI is None:
+        PhiI = solve_local(Kc, n, coarse, fI2, fB2)
+    elif fI2 is not None:
+        PhiI = PhiI * (~fI2)[:, :, None]
+    return _assemble_global(PhiI, cax, cay, grid, n, cg, lay, fixed_nodes, coarse, return_local, Kc)
+
+
+def _unused_old_path(Kc, cax, cay, grid, n, fixed_nodes, coarse, lay, cg):
+    m = lay['m']; m2 = m * m; I = lay['I']; B = lay['B']
     # 局部自由度：内部 dI，边界 dB
     dI = np.concatenate([I, I + m2]); dB = np.concatenate([B, B + m2])
     KII = Kc[:, dI][:, :, dI]; KIB = Kc[:, dI][:, :, dB]
@@ -231,6 +340,11 @@ def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixe
     PhiI_bil = np.zeros((2 * ni, 2 * nw)); PhiI_bil[:ni, :nw] = WI; PhiI_bil[ni:, nw:] = WI
     rhs = rhs + (empty * scale)[:, :, None] * PhiI_bil[None]   # 空节点取双线性值
     PhiI = np.linalg.solve(KII, rhs)                   # (ncell, 2ni, 32)
+    return PhiI
+
+
+def _assemble_global(PhiI, cax, cay, grid, n, cg, lay, fixed_nodes, coarse, return_local, Kc):
+    m = lay['m']; I = lay['I']; ni = len(I)
     # ---- 组装全局 Φ ----
     nx = grid['nx']; nn = grid['nn']; nc = cg['nc']
     # 先全部节点取全局双线性，再覆盖有粒子的粗单元内部节点
@@ -258,7 +372,7 @@ def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixe
                          (np.concatenate([br[keep], inner_rows]), np.concatenate([bc[keep], inner_cols]))),
                         shape=(2 * nn, 2 * nc))
     Phi.eliminate_zeros()
-    out = dict(Phi=Phi, cg=cg, ncell=len(keys))
+    out = dict(Phi=Phi, cg=cg, ncell=len(cax))
     if return_local:
         out.update(PhiI=PhiI, cax=cax, cay=cay, Kc=Kc, lay=lay)
     return out
