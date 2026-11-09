@@ -26,3 +26,7 @@
   epoch  24  train MSE(归一化) 7.544e-02  测试 ΔΦ 相对误差 0.2903
   epoch  25  train MSE(归一化) 7.512e-02  测试 ΔΦ 相对误差 0.2900
   epoch  26  train MSE(归一化) 7.489e-02  测试 ΔΦ 相对误差 0.2898
+  epoch  27  train MSE(归一化) 7.470e-02  测试 ΔΦ 相对误差 0.2896
+  epoch  28  train MSE(归一化) 7.461e-02  测试 ΔΦ 相对误差 0.2895
+  epoch  29  train MSE(归一化) 7.455e-02  测试 ΔΦ 相对误差 0.2895
+训练耗时 123.4s；模型 -> ml/models/basis_n8.npz；每单元推理 1.38 MFlop

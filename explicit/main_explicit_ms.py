@@ -25,6 +25,9 @@ def critical_ratio(P, grid, par, n, basis, extend=True, theta=0.3):
     lf = max_eig(K, M, (~fx) & (M > 1e-12 * M.max()))
     if basis == 'ms':
         B = build_basis(P['x'], P['V0'], P['lam'], P['mu'], grid, n, fixed_nodes=par['fixed_nodes'])
+    elif basis == 'os':
+        from common.msbasis_os import build_basis_os
+        B = build_basis_os(P['x'], P['V0'], P['lam'], P['mu'], grid, n, fixed_nodes=par['fixed_nodes'])
     else:
         cg = coarse_grid(grid, n); Pb = coarse_global(grid, cg, np.arange(nn), 'bilinear').tolil(); Pb[par['fixed_nodes'], :] = 0
         Pb = Pb.tocsr(); B = dict(Phi=sp.block_diag([Pb, Pb]).tocsr(), cg=cg)
@@ -47,6 +50,7 @@ def main():
     ap.add_argument('--basis', nargs='+', default=['ms', 'bilinear'])
     ap.add_argument('--dtfac', type=float, default=1.0, help='粗尺度时间步相对"同比例临界步"的额外系数')
     ap.add_argument('--skip_fine', action='store_true')
+    ap.add_argument('--theta', type=float, default=0.3, help='小切割外推阈值（0 关闭）')
     ap.add_argument('--flip_ms', type=float, default=0.0, help='多尺度方法区间末粒子速度更新的 FLIP 比例（默认 0：PIC，仅在区间交界处传递一次）')
     ap.add_argument('--out_every', type=int, default=20)
     ap.add_argument('--tag', default='')
@@ -68,14 +72,14 @@ def main():
         out['runs']['fine'] = dict(dt=dt0, nstep=par_f['nstep'], timing=R['timer'].t, t_total=R['timer'].total())
     for basis in a.basis:
         for n in a.n:
-            ratio, lf, lc = critical_ratio(P, grid, par, n, basis)
+            ratio, lf, lc = critical_ratio(P, grid, par, n, basis, extend=a.theta > 0, theta=a.theta)
             dt = dt0 * ratio * a.dtfac
             nstep = int(round(a.tend / dt)); dt = a.tend / nstep
             out_every = max(1, int(round(a.out_every * dt0 / dt)))
             for K in a.K:
                 name = f'{basis}_n{n}_K{K}'
                 print(f'[{name}] 临界步放大 {ratio:.2f}，dt={dt:.3e}，nstep={nstep}')
-                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms)
+                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms, extend=a.theta > 0, theta=a.theta)
                 try:
                     R = run_explicit_ms(P, grid, par_r, n=n, K_int=K, basis=basis, monitor=mon)
                 except FloatingPointError as e:

@@ -51,6 +51,9 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
             B = Phi_provider(x, Vcur, lam, mu, grid, n)
         elif basis == 'ms':
             B = build_basis(x, Vcur, lam, mu, grid, n, quad=quad, fixed_nodes=par['fixed_nodes'])
+        elif basis == 'os':                        # 边自适应（两单元过采样）多尺度基
+            from common.msbasis_os import build_basis_os
+            B = build_basis_os(x, Vcur, lam, mu, grid, n, fixed_nodes=par['fixed_nodes'])
         else:                                      # 对照：纯粗尺度双线性（不含非均质信息）
             from common.msbasis import coarse_grid, coarse_global
             cg = coarse_grid(grid, n); Pb = coarse_global(grid, cg, np.arange(nn), 'bilinear')
