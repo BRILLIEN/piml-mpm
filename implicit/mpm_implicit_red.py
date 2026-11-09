@@ -19,7 +19,27 @@ from common.msbasis import extend_small_cut
 from implicit.mpm_implicit import _pattern, _tangent_vals
 
 
-def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None, theta=0.1, verbose=False):
+def coarse_tangent_direct(qidx, qdx, qdy, Pf_x, Pf_y, coef, qV, Jr, lam_, mu_, s11, s12, s22, nn):
+    """在积分点上直接组装粗切线：G = D Φ（D 为参考构形形函数梯度的稀疏矩阵），
+    当前构形梯度 ∂u/∂x = c1·G_X + c2·G_Y（c 来自 F_rel^{-T}），K_c = Σ GᵀWG（材料 + 几何），不组装细尺度 K。"""
+    a11, a12, a21, a22 = coef
+    nq = qidx.shape[0]; r = np.repeat(np.arange(nq), qidx.shape[1])
+    DX = sp.csr_matrix((qdx.ravel(), (r, qidx.ravel())), shape=(nq, nn))
+    DY = sp.csr_matrix((qdy.ravel(), (r, qidx.ravel())), shape=(nq, nn))
+    UXx = DX @ Pf_x; UXy = DY @ Pf_x; UYx = DX @ Pf_y; UYy = DY @ Pf_y          # 参考构形梯度（粗）
+    d = lambda v: sp.diags(v)
+    # 当前构形：∂/∂x = (a22 ∂/∂X − a21 ∂/∂Y)/Jr，∂/∂y = (−a12 ∂/∂X + a11 ∂/∂Y)/Jr
+    gxx = d(a22 / Jr) @ UXx - d(a21 / Jr) @ UXy; gxy = d(-a12 / Jr) @ UXx + d(a11 / Jr) @ UXy
+    gyx = d(a22 / Jr) @ UYx - d(a21 / Jr) @ UYy; gyy = d(-a12 / Jr) @ UYx + d(a11 / Jr) @ UYy
+    v = Jr * qV
+    tr = gxx + gyy; sh = gxy + gyx
+    K = (tr.T @ d(v * lam_) @ tr + gxx.T @ d(2 * v * mu_) @ gxx + gyy.T @ d(2 * v * mu_) @ gyy + sh.T @ d(v * mu_) @ sh)
+    for gx_, gy_ in ((gxx, gxy), (gyx, gyy)):
+        K = K + gx_.T @ d(v * s11) @ gx_ + gx_.T @ d(v * s12) @ gy_ + gy_.T @ d(v * s12) @ gx_ + gy_.T @ d(v * s22) @ gy_
+    return K.tocsc()
+
+
+def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None, theta=0.1, verbose=False, direct_coarse=False):
     from common.msbasis_os import build_basis_os
     from common.msbasis import build_basis
     x = P['x'].copy(); m = P['m']; V0 = P['V0']; lam = P['lam']; mu = P['mu']
@@ -62,8 +82,12 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
             qidx, qdx, qdy, qF0, qV, ql, qm = idx, dNx, dNy, F0, Vp0, lam, mu
         qfi = qidx.ravel()
         T.tic('pattern')
-        free_map = -np.ones(2 * nn, np.int64); free_map[fdofs] = np.arange(len(fdofs))
-        pat = _pattern(qidx, nn, free_map)
+        if direct_coarse:
+            E = sp.csr_matrix((np.ones(len(fdofs)), (fdofs, np.arange(len(fdofs)))), shape=(2 * nn, len(fdofs)))
+            Pg = (E @ Pf).tocsr(); Pf_x = Pg[:nn]; Pf_y = Pg[nn:]
+        else:
+            free_map = -np.ones(2 * nn, np.int64); free_map[fdofs] = np.arange(len(fdofs))
+            pat = _pattern(qidx, nn, free_map)
         fext = PfT @ np.concatenate([mi * gx * fac, mi * gy * fac])[fdofs]
         U = np.zeros(ncd)
         for it in range(maxit + 1):
@@ -88,6 +112,13 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
                 break
             if it == maxit:
                 T.stop(); raise RuntimeError(f'载荷步 {ls} 约化 Newton 未收敛 {rn:.2e}')
+            if direct_coarse:
+                T.tic('tangent_coarse')
+                Kc = coarse_tangent_direct(qidx, qdx, qdy, Pf_x, Pf_y, (a11, a12, a21, a22), qV, Jr, ql / J,
+                                           (qm - ql * np.log(J)) / J, s11, s12, s22, nn)
+                T.tic('solve')
+                U = U + splu(Kc, permc_spec='MMD_AT_PLUS_A').solve(R)
+                continue
             T.tic('tangent')
             dX = (a22[:, None] * qdx - a21[:, None] * qdy) / Jr[:, None]; dY = (-a12[:, None] * qdx + a11[:, None] * qdy) / Jr[:, None]
             vals = _tangent_vals(dX, dY, Jr * qV, ql / J, (qm - ql * np.log(J)) / J, s11, s12, s22)

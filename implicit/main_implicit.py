@@ -109,7 +109,7 @@ def main():
                 from ml.train_edge import PIMLEdge
                 em = {e: PIMLEdge(f'ml/models/edge_n{a.n}_{e}_c100.npz') for e in 'xy'}
             R = run_implicit_reduced(P, grid, par, n=a.n, basis='ms' if name.startswith('red_ms') else 'os',
-                                     agg=1 if name.endswith('_agg') else 0, edge_models=em)
+                                     agg=1 if ('_agg' in name) else 0, edge_models=em, direct_coarse=name.endswith('_dc'))
             R['hist']['lin_it'] = np.zeros_like(R['hist']['newton']); R['hist']['Es'] = np.zeros(len(R['hist']['newton']))
         else:
             solver, pb, extra = solver_setup(name, cfg)
