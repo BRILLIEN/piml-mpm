@@ -262,3 +262,56 @@ def build_basis(xp, Vp, lam, mu, grid, n, return_local=False, quad='image', fixe
     if return_local:
         out.update(PhiI=PhiI, cax=cax, cay=cay, Kc=Kc, lay=lay)
     return out
+
+
+def extend_small_cut(Phi, cg, mh, theta=0.3, order=2):
+    """小切割粗自由度的外推约束（扩展 B 样条思想，Höllig 2001 的 WEB-spline / extended B-spline）：
+    粗节点 J 的"材料支撑度" d_J = Σ_i Φ_iJ² m_i（一致质量对角，两分量求和）；d_J < θ·d_ref（d_ref 为 90% 分位）
+    视为小切割（坏）节点，令 V_J = Σ_K w_JK V_K，K 为距离最近的 (order+1)² 个好节点构成的规则块，
+    w 为张量积 Lagrange 外推权（∑w=1，且再现 order 次多项式）⇒ Φ_eff = Φ C 保持单位分解、刚体与多项式再现，
+    同时消除质量极小而刚度有限的自由度（其限制显式临界时间步、并使隐式粗算子病态）。
+    返回 Phi_eff（坏节点列为零）与信息。"""
+    nc = cg['nc']; ncx = cg['ncx']; ncy = cg['ncy']
+    P2 = Phi.multiply(Phi).T.tocsr()
+    d2 = P2 @ mh
+    d = d2[:nc] + d2[nc:]
+    pos = d > 1e-14 * d.max()
+    if not pos.any():
+        return Phi, dict(nbad=0)
+    dref = np.percentile(d[pos], 90)
+    good = d >= theta * dref
+    bad = np.where(pos & ~good)[0]
+    gi = good.reshape(ncy, ncx)
+    k = order + 1
+    # 规则块 (k×k) 全为好节点的左下角位置
+    ok = np.ones((ncy - k + 1, ncx - k + 1), bool)
+    for a in range(k):
+        for b in range(k):
+            ok &= gi[a:a + ncy - k + 1, b:b + ncx - k + 1]
+    by, bx = np.where(ok)
+    if len(bx) == 0 and order > 1:
+        return extend_small_cut(Phi, cg, mh, theta, 1)
+    cen_x = bx + 0.5 * (k - 1); cen_y = by + 0.5 * (k - 1)
+    rows = []; cols = []; vals = []
+    gidx = np.where(good)[0]
+    rows.append(gidx); cols.append(gidx); vals.append(np.ones(len(gidx)))
+    for J in bad:
+        jx = J % ncx; jy = J // ncx
+        q = np.argmin((cen_x - jx) ** 2 + (cen_y - jy) ** 2)
+        x0 = bx[q]; y0 = by[q]
+        nodes_x = x0 + np.arange(k); nodes_y = y0 + np.arange(k)
+        def lag(xs, t):
+            w = np.ones(k)
+            for a in range(k):
+                for b in range(k):
+                    if a != b:
+                        w[a] *= (t - xs[b]) / (xs[a] - xs[b])
+            return w
+        wx = lag(nodes_x, jx); wy = lag(nodes_y, jy)
+        W = np.outer(wy, wx).ravel()
+        K = (nodes_x[None, :] + nodes_y[:, None] * ncx).ravel()
+        rows.append(np.full(len(K), J)); cols.append(K); vals.append(W)
+    r = np.concatenate(rows); c = np.concatenate(cols); v = np.concatenate(vals)
+    C1 = sp.csr_matrix((v, (r, c)), shape=(nc, nc))
+    C = sp.block_diag([C1, C1]).tocsr()
+    return (Phi @ C).tocsr(), dict(nbad=len(bad), ngood=int(good.sum()), dref=dref)

@@ -14,11 +14,11 @@ import scipy.sparse as sp
 from explicit.main_explicit import BASE, CASES
 from explicit.mpm_explicit import run_explicit
 from explicit.mpm_explicit_ms import run_explicit_ms
-from common.msbasis import build_basis, coarse_grid, coarse_global
+from common.msbasis import build_basis, coarse_grid, coarse_global, extend_small_cut
 from common.assemble import elastic_K, lumped_mass, max_eig
 
 
-def critical_ratio(P, grid, par, n, basis):
+def critical_ratio(P, grid, par, n, basis, extend=True, theta=0.3):
     """返回 λ_max(细)/λ_max(粗) 的平方根，即临界时间步放大倍数（t=0 构形，线弹性）。"""
     K = elastic_K(P['x'], P['V0'], P['lam'], P['mu'], grid); M = lumped_mass(P['x'], P['m'], grid)
     nn = grid['nn']; fx = np.zeros(2 * nn, bool); fx[par['fixed_nodes']] = True; fx[par['fixed_nodes'] + nn] = True
@@ -28,7 +28,10 @@ def critical_ratio(P, grid, par, n, basis):
     else:
         cg = coarse_grid(grid, n); Pb = coarse_global(grid, cg, np.arange(nn), 'bilinear').tolil(); Pb[par['fixed_nodes'], :] = 0
         Pb = Pb.tocsr(); B = dict(Phi=sp.block_diag([Pb, Pb]).tocsr(), cg=cg)
-    Phi = B['Phi']; Kc = (Phi.T @ K @ Phi).tocsr(); Mc = (Phi.T @ sp.diags(M) @ Phi).tocsr()
+    Phi = B['Phi']
+    if extend:
+        Phi, _ = extend_small_cut(Phi, B['cg'], M, theta)
+    Kc = (Phi.T @ K @ Phi).tocsr(); Mc = (Phi.T @ sp.diags(M) @ Phi).tocsr()
     d = Mc.diagonal(); fc = d > 1e-10 * d.max()
     lc = max_eig(Kc, Mc, fc)
     return float(np.sqrt(lf / lc)), float(lf), float(lc)

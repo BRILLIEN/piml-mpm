@@ -25,7 +25,7 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import splu
 from common.shape import shape_2d
 from common.material import neo_cauchy, neo_energy
-from common.msbasis import build_basis
+from common.msbasis import build_basis, extend_small_cut
 from common.timer import Timer
 
 
@@ -56,10 +56,15 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
             cg = coarse_grid(grid, n); Pb = coarse_global(grid, cg, np.arange(nn), 'bilinear')
             Pb = Pb.tolil(); Pb[par['fixed_nodes'], :] = 0; Pb = Pb.tocsr()      # 细尺度固定节点行置零
             B = dict(Phi=sp.block_diag([Pb, Pb]).tocsr(), cg=cg)
-        Phi = B['Phi']; cg = B['cg']; nc = cg['nc']; PhiT = Phi.T.tocsr()
         T.tic('int_mass')
         mN = N * m[:, None]
         mi = np.bincount(fi, mN.ravel(), nn)
+        Phi = B['Phi']; cg = B['cg']; nc = cg['nc']
+        if par.get('extend', True):            # 小切割粗自由度外推约束
+            T.tic('int_extend')
+            Phi, einfo = extend_small_cut(Phi, cg, np.concatenate([mi, mi]), theta=par.get('theta', 0.3))
+            T.tic('int_mass')
+        PhiT = Phi.T.tocsr()
         pxi = np.bincount(fi, (mN * v[:, 0:1]).ravel(), nn); pyi = np.bincount(fi, (mN * v[:, 1:2]).ravel(), nn)
         mh = np.concatenate([mi, mi])
         # 粗尺度一致质量 Mc = Φ^T M_h Φ（Galerkin）。多尺度基含负值，行和集中质量可能近零/失去能量有界性，
