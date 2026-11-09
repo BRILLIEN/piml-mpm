@@ -97,22 +97,38 @@ def main():
     os.makedirs('results/implicit', exist_ok=True)
     out = dict(cfg={k: v for k, v in cfg.items()}, Np=len(P['m']), runs={})
     print(f'[I-beam] Np={len(P["m"])}，网格节点={grid["nn"]}，载荷步={a.nload}，粗化比={a.n}')
-    xref = None
+    xref = None; tipref = None
     for name in a.solvers:
-        solver, pb, extra = solver_setup(name, cfg)
         print(f'===== {name} =====')
         t0 = time.perf_counter()
-        R = run_implicit(P, grid, dict(par, **extra), solver=solver, precond_builder=pb, verbose=not a.quiet)
+        if name.startswith('red_'):
+            # 约化 Newton：red_{os|ms}[_piml][_agg]
+            from implicit.mpm_implicit_red import run_implicit_reduced
+            em = None
+            if '_piml' in name:
+                from ml.train_edge import PIMLEdge
+                em = {e: PIMLEdge(f'ml/models/edge_n{a.n}_{e}_c100.npz') for e in 'xy'}
+            R = run_implicit_reduced(P, grid, par, n=a.n, basis='ms' if name.startswith('red_ms') else 'os',
+                                     agg=1 if name.endswith('_agg') else 0, edge_models=em)
+            R['hist']['lin_it'] = np.zeros_like(R['hist']['newton']); R['hist']['Es'] = np.zeros(len(R['hist']['newton']))
+        else:
+            solver, pb, extra = solver_setup(name, cfg)
+            R = run_implicit(P, grid, dict(par, **extra), solver=solver, precond_builder=pb, verbose=not a.quiet)
         wall = time.perf_counter() - t0
         print(R['timer'].report(name))
         H = R['hist']
         if xref is None:
             xref = R['x']
         err = float(np.sqrt(np.mean(np.sum((R['x'] - xref) ** 2, 1))))
+        if tipref is None:
+            tipref = H_tip0 = R['hist']['tip'][-1].copy()
+        tip_err = float(abs(R['hist']['tip'][-1][1] - tipref[1]) / abs(tipref[1] - P['x'][par['monitor'][0], 1]))
         out['runs'][name] = dict(wall=wall, timing=R['timer'].t, newton=H['newton'].tolist(), lin_it=H['lin_it'].tolist(),
-                                 ndof=H['ndof'].tolist(), tip=H['tip'].tolist(), Es=H['Es'].tolist(), x_rms_vs_first=err)
+                                 ndof=H['ndof'].tolist(), tip=H['tip'].tolist(), Es=H['Es'].tolist(), x_rms_vs_first=err,
+                                 tip_err_vs_first=tip_err)
         print(f'  总耗时 {wall:.2f}s，Newton 总数 {H["newton"].sum()}，线性迭代总数 {H["lin_it"].sum()}，'
-              f'自由端最终 y = {H["tip"][-1][1]:.6f}，与首个求解器的粒子位置 RMS 差 {err:.2e}')
+              f'自由端最终 y = {H["tip"][-1][1]:.6f}，与首个求解器的粒子位置 RMS 差 {err:.2e}，自由端挠度相对误差 {tip_err:.4f}，'
+              f'求解自由度 {int(np.mean(H["ndof"]))}')
         np.savez(f'results/implicit/{tag}_{name}.npz', x=R['x'], s=R['s'], F=R['F'])
     # =================================================================
     # 四、数据整理
