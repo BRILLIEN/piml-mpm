@@ -57,3 +57,27 @@
   step    3240  t=2.5552e-01  Ek=8.5362e+01  Es=2.0482e+02  Etot=-4.8256e+00
   step    3420  t=2.6972e-01  Ek=7.4964e+01  Es=2.3252e+02  Etot=-5.4961e+00
   step    3600  t=2.8391e-01  Ek=6.3169e+01  Es=2.6057e+02  Etot=-6.0068e+00
+  step    3780  t=2.9811e-01  Ek=5.1250e+01  Es=2.8768e+02  Etot=-6.5787e+00
+  step    3960  t=3.1230e-01  Ek=3.9725e+01  Es=3.1340e+02  Etot=-7.1412e+00
+  step    4140  t=3.2650e-01  Ek=2.8829e+01  Es=3.3715e+02  Etot=-7.4443e+00
+  step    4320  t=3.4069e-01  Ek=1.8744e+01  Es=3.5780e+02  Etot=-7.9165e+00
+  step    4500  t=3.5489e-01  Ek=1.0220e+01  Es=3.7423e+02  Etot=-8.3033e+00
+  step    4680  t=3.6909e-01  Ek=4.2706e+00  Es=3.8531e+02  Etot=-8.5696e+00
+  step    4860  t=3.8328e-01  Ek=1.2952e+00  Es=3.9065e+02  Etot=-8.6580e+00
+  step    5040  t=3.9748e-01  Ek=9.6891e-01  Es=3.9042e+02  Etot=-8.5789e+00
+--- 计时分解 os_n8_K50  总计 246.603 s ---
+  int_shape                  1.063 s    0.43 %
+  int_basis                142.494 s   57.78 %
+  int_mass                  11.530 s    4.68 %
+  int_extend                 3.820 s    1.55 %
+  output                     6.085 s    2.47 %
+  step_gather               37.694 s   15.29 %
+  step_const                10.452 s    4.24 %
+  step_scatter              21.099 s    8.56 %
+  step_coarse               10.878 s    4.41 %
+  int_update                 1.489 s    0.60 %
+保存 -> results/explicit/t8.json
+方法                      nstep     总耗时s     加速比    e_tip e_tipmax      e_E   ΔE_end   e_xfin
+fine                    22646   910.73    1.00   0.0000   0.0000   0.0000  -0.0114   0.0000
+os_n8_K50                5072   246.60    3.69   0.0176   0.0243   0.0239  -0.0219   0.0158
+DONE
