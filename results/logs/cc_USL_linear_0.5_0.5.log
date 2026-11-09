@@ -1,0 +1,21 @@
+[beam] Np=8000, 网格节点=24600, dt=3.533e-05, nstep=22646, 夹杂数=48, 形函数=linear
+  step       0  t=0.0000e+00  Ek=0.0000e+00  Es=0.0000e+00  Etot=0.0000e+00
+  step     100  t=3.5327e-03  Ek=1.2369e-01  Es=3.7771e-03  Etot=-1.2614e-03
+  step     200  t=7.0654e-03  Ek=4.6898e-01  Es=2.5829e-02  Etot=-2.4602e-03
+  step     300  t=1.0598e-02  Ek=1.0091e+00  Es=7.2880e-02  Etot=-3.6807e-03
+  step     400  t=1.4131e-02  Ek=1.7255e+00  Es=1.5037e-01  Etot=-5.0075e-03
+  step     500  t=1.7664e-02  Ek=2.6018e+00  Es=2.6232e-01  Etot=-6.4412e-03
+  step     600  t=2.1196e-02  Ek=3.6261e+00  Es=4.0969e-01  Etot=-7.9830e-03
+/home/user/piml-mpm/common/material.py:21: RuntimeWarning: invalid value encountered in log
+  lnJ = np.log(J)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/user/piml-mpm/explicit/main_explicit.py", line 108, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/piml-mpm/explicit/main_explicit.py", line 91, in main
+    R = run_explicit(P, grid, par, kind=cfg['shape'], monitor=mon)
+  File "/home/user/piml-mpm/explicit/mpm_explicit.py", line 99, in run_explicit
+    raise FloatingPointError(f'J<=0 或非有限，step {n}')
+FloatingPointError: J<=0 或非有限，step 623

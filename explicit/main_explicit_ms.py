@@ -25,7 +25,7 @@ def critical_ratio(P, grid, par, n, basis, extend=True, theta=0.3):
     lf = max_eig(K, M, (~fx) & (M > 1e-12 * M.max()))
     if basis == 'ms':
         B = build_basis(P['x'], P['V0'], P['lam'], P['mu'], grid, n, fixed_nodes=par['fixed_nodes'])
-    elif basis == 'os':
+    elif basis in ('os', 'os_piml'):            # 临界步按精确边自适应基估计（两者采用相同时间步，公平比较）
         from common.msbasis_os import build_basis_os
         B = build_basis_os(P['x'], P['V0'], P['lam'], P['mu'], grid, n, fixed_nodes=par['fixed_nodes'])
     else:

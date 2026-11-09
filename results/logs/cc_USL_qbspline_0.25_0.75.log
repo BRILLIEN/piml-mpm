@@ -181,3 +181,19 @@
   step   17900  t=6.3235e-01  Ek=1.0513e+03  Es=6.1656e+01  Etot=-2.8602e+02
   step   18000  t=6.3589e-01  Ek=1.0741e+03  Es=6.1401e+01  Etot=-2.8656e+02
   step   18100  t=6.3942e-01  Ek=1.0971e+03  Es=6.1120e+01  Etot=-2.8715e+02
+  step   18200  t=6.4295e-01  Ek=1.1208e+03  Es=6.0335e+01  Etot=-2.8783e+02
+  step   18300  t=6.4648e-01  Ek=1.1439e+03  Es=6.0366e+01  Etot=-2.8860e+02
+  step   18400  t=6.5002e-01  Ek=1.1650e+03  Es=6.2455e+01  Etot=-2.8946e+02
+  step   18500  t=6.5355e-01  Ek=1.1845e+03  Es=6.6455e+01  Etot=-2.9039e+02
+  step   18600  t=6.5708e-01  Ek=1.2033e+03  Es=7.1419e+01  Etot=-2.9125e+02
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/user/piml-mpm/explicit/main_explicit.py", line 108, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/piml-mpm/explicit/main_explicit.py", line 91, in main
+    R = run_explicit(P, grid, par, kind=cfg['shape'], monitor=mon)
+  File "/home/user/piml-mpm/explicit/mpm_explicit.py", line 58, in run_explicit
+    mI = np.bincount(fi, mN.ravel(), nn)
+ValueError: 'list' argument must have no negative elements
