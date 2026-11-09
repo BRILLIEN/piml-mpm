@@ -77,6 +77,14 @@ def run_explicit(P, grid, par, kind='qbspline', monitor=None, verbose=True):
         v[:, 0] = alpha * (v[:, 0] + dt * apx) + (1 - alpha) * vpicx
         v[:, 1] = alpha * (v[:, 1] + dt * apy) + (1 - alpha) * vpicy
         x[:, 0] += dt * vpicx; x[:, 1] += dt * vpicy
+        if par.get('scheme', 'USL') == 'MUSL':
+            # MUSL：用更新后的粒子动量重新映射网格速度，再求速度梯度（抑制小质量节点引起的速度放大）
+            T.tic('musl')
+            vxn = np.bincount(fi, (mN * v[:, 0:1]).ravel(), nn) * inv
+            vyn = np.bincount(fi, (mN * v[:, 1:2]).ravel(), nn) * inv
+            vxn[fixed] = 0.0; vyn[fixed] = 0.0
+            vxn_p = vxn[idx]; vyn_p = vyn[idx]
+            T.tic('g2p')
         L11 = np.sum(vxn_p * dNx, 1); L12 = np.sum(vxn_p * dNy, 1)
         L21 = np.sum(vyn_p * dNx, 1); L22 = np.sum(vyn_p * dNy, 1)
         # ---- 5 本构 ----

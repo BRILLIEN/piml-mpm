@@ -8,3 +8,21 @@
   epoch   6  train MSE(归一化) 1.220e-01  测试 ΔΦ 相对误差 0.3520
   epoch   7  train MSE(归一化) 1.143e-01  测试 ΔΦ 相对误差 0.3421
   epoch   8  train MSE(归一化) 1.076e-01  测试 ΔΦ 相对误差 0.3330
+  epoch   9  train MSE(归一化) 1.022e-01  测试 ΔΦ 相对误差 0.3265
+  epoch  10  train MSE(归一化) 9.785e-02  测试 ΔΦ 相对误差 0.3211
+  epoch  11  train MSE(归一化) 9.418e-02  测试 ΔΦ 相对误差 0.3162
+  epoch  12  train MSE(归一化) 9.115e-02  测试 ΔΦ 相对误差 0.3118
+  epoch  13  train MSE(归一化) 8.861e-02  测试 ΔΦ 相对误差 0.3091
+  epoch  14  train MSE(归一化) 8.630e-02  测试 ΔΦ 相对误差 0.3054
+  epoch  15  train MSE(归一化) 8.432e-02  测试 ΔΦ 相对误差 0.3024
+  epoch  16  train MSE(归一化) 8.272e-02  测试 ΔΦ 相对误差 0.2999
+  epoch  17  train MSE(归一化) 8.121e-02  测试 ΔΦ 相对误差 0.2979
+  epoch  18  train MSE(归一化) 7.986e-02  测试 ΔΦ 相对误差 0.2960
+  epoch  19  train MSE(归一化) 7.875e-02  测试 ΔΦ 相对误差 0.2947
+  epoch  20  train MSE(归一化) 7.782e-02  测试 ΔΦ 相对误差 0.2935
+  epoch  21  train MSE(归一化) 7.707e-02  测试 ΔΦ 相对误差 0.2926
+  epoch  22  train MSE(归一化) 7.638e-02  测试 ΔΦ 相对误差 0.2917
+  epoch  23  train MSE(归一化) 7.586e-02  测试 ΔΦ 相对误差 0.2909
+  epoch  24  train MSE(归一化) 7.544e-02  测试 ΔΦ 相对误差 0.2903
+  epoch  25  train MSE(归一化) 7.512e-02  测试 ΔΦ 相对误差 0.2900
+  epoch  26  train MSE(归一化) 7.489e-02  测试 ΔΦ 相对误差 0.2898

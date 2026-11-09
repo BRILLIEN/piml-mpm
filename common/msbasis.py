@@ -347,8 +347,11 @@ def _assemble_global(PhiI, cax, cay, grid, n, cg, lay, fixed_nodes, coarse, retu
     m = lay['m']; I = lay['I']; ni = len(I)
     # ---- 组装全局 Φ ----
     nx = grid['nx']; nn = grid['nn']; nc = cg['nc']
-    # 先全部节点取全局双线性，再覆盖有粒子的粗单元内部节点
-    Pb = coarse_global(grid, cg, np.arange(nn), coarse).tocoo()
+    # 骨架行：只在粗单元局部块覆盖的细节点上计算全局粗形函数（其余节点不被任何粒子支撑，无需计算）
+    blk = np.unique(((n * cax[:, None] + (np.arange(m * m) % m)[None]) +
+                     (n * cay[:, None] + (np.arange(m * m) // m)[None]) * nx).ravel())
+    Pb = coarse_global(grid, cg, blk, coarse).tocoo()
+    Pb = sp.coo_matrix((Pb.data, (blk[Pb.row], Pb.col)), shape=(nn, nc))
     inner_rows = []; inner_cols = []; inner_vals = []
     lx = I % m; ly = I // m
     gnode = (n * cax[:, None] + lx[None]) + (n * cay[:, None] + ly[None]) * nx      # (ncell, ni)

@@ -78,12 +78,13 @@ def main():
     ap.add_argument('--shift', type=float, nargs=2, default=BASE['grid_shift'])
     ap.add_argument('--out_every', type=int, default=50)
     ap.add_argument('--tag', default='')
+    ap.add_argument('--scheme', default='USL', help='USL 或 MUSL')
     a = ap.parse_args()
     cfg = dict(BASE, h=a.h, ppc=a.ppc, shape=a.shape, grid_shift=tuple(a.shift))
     t0 = time.perf_counter()
     P, grid, par, mon, incl = CASES[a.case](cfg)
     nstep = a.nstep if a.nstep is not None else int(np.ceil(a.tend / par['dt']))
-    par.update(nstep=nstep, out_every=a.out_every)
+    par.update(nstep=nstep, out_every=a.out_every, scheme=a.scheme)
     t_setup = time.perf_counter() - t0
     print(f'[{a.case}] Np={len(P["m"])}, 网格节点={grid["nn"]}, dt={par["dt"]:.3e}, nstep={nstep}, '
           f'夹杂数={len(incl)}, 形函数={cfg["shape"]}')
