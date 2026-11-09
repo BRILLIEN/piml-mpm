@@ -280,7 +280,7 @@ def solve_local(Kc, n, coarse='qbspline', fI2=None, fB2=None):
     empty = diag < 1e-12 * scale
     KII = KII + np.einsum('ci,ij->cij', empty * scale + 1e-14 * scale, np.eye(len(dI)))
     if fI2 is not None:
-        rhs = -np.einsum('cij,cjk->cik', KIB, (~fB2)[:, :, None] * PhiB[None])
+        rhs = -KIB @ ((~fB2)[:, :, None] * PhiB[None])
         KII = KII * (~fI2)[:, :, None] * (~fI2)[:, None, :] + np.einsum('ci,ij->cij', fI2 * scale, np.eye(len(dI)))
         rhs = rhs * (~fI2)[:, :, None]
         empty = empty & ~fI2
@@ -329,7 +329,7 @@ def _unused_old_path(Kc, cax, cay, grid, n, fixed_nodes, coarse, lay, cg):
         fB = isfix[(n * cax[:, None] + lxB[None]) + (n * cay[:, None] + lyB[None]) * nxg]      # (ncell, nb)
         fI = isfix[(n * cax[:, None] + lxI[None]) + (n * cay[:, None] + lyI[None]) * nxg]      # (ncell, ni)
         fB2 = np.concatenate([fB, fB], 1); fI2 = np.concatenate([fI, fI], 1)
-        rhs = -np.einsum('cij,cjk->cik', KIB, (~fB2)[:, :, None] * PhiB[None])
+        rhs = -KIB @ ((~fB2)[:, :, None] * PhiB[None])
         # 固定的内部自由度：行列清零、对角置 scale、右端为零
         KII = KII * (~fI2)[:, :, None] * (~fI2)[:, None, :] + np.einsum('ci,ij->cij', fI2 * scale, np.eye(len(dI)))
         rhs = rhs * (~fI2)[:, :, None]

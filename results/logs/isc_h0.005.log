@@ -10,3 +10,45 @@
   update                     0.047 s    0.05 %
   总耗时 101.23s，Newton 总数 48，线性迭代总数 0，自由端最终 y = -0.345714，与首个求解器的粒子位置 RMS 差 0.00e+00
 ===== pcg_2l_bil =====
+--- 计时分解 pcg_2l_bil  总计 220.254 s ---
+  shape                      0.120 s    0.05 %
+  pattern                   28.686 s   13.02 %
+  const                      0.775 s    0.35 %
+  resid                      0.430 s    0.20 %
+  tangent                   31.997 s   14.53 %
+  precond                    0.077 s    0.04 %
+  precond_basis             22.961 s   10.42 %
+  precond_coarse             1.125 s    0.51 %
+  precond_ilu               12.044 s    5.47 %
+  solve                    121.990 s   55.39 %
+  update                     0.049 s    0.02 %
+  总耗时 220.26s，Newton 总数 48，线性迭代总数 14611，自由端最终 y = -0.345714，与首个求解器的粒子位置 RMS 差 1.13e-16
+===== pcg_2l_ms =====
+--- 计时分解 pcg_2l_ms  总计 220.899 s ---
+  shape                      0.102 s    0.05 %
+  pattern                   29.683 s   13.44 %
+  const                      0.669 s    0.30 %
+  resid                      0.401 s    0.18 %
+  tangent                   29.282 s   13.26 %
+  precond                    0.177 s    0.08 %
+  precond_basis             13.220 s    5.98 %
+  precond_coarse             3.506 s    1.59 %
+  precond_ilu               11.501 s    5.21 %
+  solve                    132.312 s   59.90 %
+  update                     0.046 s    0.02 %
+  总耗时 220.90s，Newton 总数 48，线性迭代总数 14365，自由端最终 y = -0.345714，与首个求解器的粒子位置 RMS 差 9.72e-17
+===== pcg_2l_ms_reuse =====
+--- 计时分解 pcg_2l_ms_reuse  总计 232.322 s ---
+  shape                      0.097 s    0.04 %
+  pattern                   33.150 s   14.27 %
+  const                      0.582 s    0.25 %
+  resid                      0.367 s    0.16 %
+  tangent                   33.419 s   14.38 %
+  precond                    0.170 s    0.07 %
+  precond_basis              2.714 s    1.17 %
+  precond_coarse             3.759 s    1.62 %
+  precond_ilu               11.891 s    5.12 %
+  solve                    146.131 s   62.90 %
+  update                     0.041 s    0.02 %
+  总耗时 232.33s，Newton 总数 48，线性迭代总数 14365，自由端最终 y = -0.345714，与首个求解器的粒子位置 RMS 差 9.72e-17
+保存 -> results/implicit/isc_h0.005_n8.json

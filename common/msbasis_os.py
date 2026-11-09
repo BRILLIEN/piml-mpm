@@ -38,6 +38,21 @@ def block_templates(sny, snx):
     return _BT[key]
 
 
+def block_K_rows(il, im, sny, snx, rows):
+    """只组装给定局部行（未知自由度）的块刚度 (nb, len(rows), nd)：避免整块 nd×nd 稠密分配。"""
+    tl, tm, flat, my, mx = block_templates(sny, snx)
+    nb = il.shape[0]; nd = 2 * my * mx; nr = len(rows)
+    key = ('rows', sny, snx, nr, int(rows.sum()))
+    if key not in _BT:
+        rmap = -np.ones(nd, np.int64); rmap[rows] = np.arange(nr)
+        r = flat // nd; c = flat % nd; ok = rmap[r] >= 0
+        _BT[key] = (np.where(ok, rmap[r] * nd + c, 0), ok)
+    fl2, ok = _BT[key]
+    vals = (il.reshape(nb, -1)[:, :, None] * tl[None, None, :] + im.reshape(nb, -1)[:, :, None] * tm[None, None, :]) * ok[None]
+    pos = (np.arange(nb)[:, None, None] * (nr * nd) + fl2[None]).ravel()
+    return np.bincount(pos, vals.ravel(), nb * nr * nd).reshape(nb, nr, nd)
+
+
 def block_K(il, im, sny, snx):
     tl, tm, flat, my, mx = block_templates(sny, snx)
     nb = il.shape[0]; nd = 2 * my * mx
@@ -52,6 +67,59 @@ def coarse_vals(gi, gj, n, cxs, cys):
     return _f1d(sx[..., None] - cxs, 'qbspline') * _f1d(sy[..., None] - cys, 'qbspline')
 
 
+def edge_layout(n, etype):
+    """两单元块的局部布局：未知量掩码、条带节点、粗列偏移（相对边索引 (A,B)）。"""
+    if etype == 'x':
+        sny, snx = 2 * n, n
+    else:
+        sny, snx = n, 2 * n
+    my, mx = sny + 2, snx + 2
+    lx = np.arange(my * mx) % mx; ly = np.arange(my * mx) // mx
+    if etype == 'x':
+        inx = (lx >= 2) & (lx <= n - 1)
+        unk_n = inx & (ly >= 2) & (ly <= 2 * n - 1); strip = inx & (ly >= n) & (ly <= n + 1)
+        Aoff = np.arange(-1, 3); Boff = np.arange(-2, 3)
+    else:
+        iny = (ly >= 2) & (ly <= n - 1)
+        unk_n = iny & (lx >= 2) & (lx <= 2 * n - 1); strip = iny & (lx >= n) & (lx <= n + 1)
+        Aoff = np.arange(-2, 3); Boff = np.arange(-1, 3)
+    CA, CB = np.meshgrid(Aoff, Boff)
+    unk = np.concatenate([unk_n, unk_n]); U = np.where(unk)[0]
+    sel = np.where(np.concatenate([strip, strip])[U])[0]
+    return dict(sny=sny, snx=snx, my=my, mx=mx, lx=lx, ly=ly, unk=unk, sel=sel, snodes=np.where(strip)[0],
+                CA=CA.ravel(), CB=CB.ravel())
+
+
+def edge_images(ims, edges, n, etype):
+    nE = len(edges); lay_s = (2 * n, n) if etype == 'x' else (n, 2 * n)
+    IL = np.empty((nE,) + lay_s); IM = np.empty((nE,) + lay_s); org = np.empty((nE, 2), np.int64)
+    for k, (A, B) in enumerate(edges):
+        if etype == 'x':
+            l0, m0 = ims.get(A, B - 1); l1, m1 = ims.get(A, B)
+            IL[k] = np.concatenate([l0, l1], 0); IM[k] = np.concatenate([m0, m1], 0); org[k] = (n * A, n * (B - 1))
+        else:
+            l0, m0 = ims.get(A - 1, B); l1, m1 = ims.get(A, B)
+            IL[k] = np.concatenate([l0, l1], 1); IM[k] = np.concatenate([m0, m1], 1); org[k] = (n * (A - 1), n * B)
+    return IL, IM, org
+
+
+def edge_solve_exact(IL, IM, n, etype, gi=None, gj=None, EA=None, EB=None, fl=None):
+    """精确求两单元块问题，返回条带值 (nE, 2ns, 2ncol)。gi/gj 为块节点全局坐标（用于粗函数值）；
+    若为 None（训练数据），取块原点 (n, n)·任意整数平移不变 —— 粗函数值只依赖相对位置。"""
+    lay = edge_layout(n, etype); nE = IL.shape[0]
+    K = block_K_rows(IL, IM, lay['sny'], lay['snx'], np.where(lay['unk'])[0])
+    m2 = lay['my'] * lay['mx']; CA, CB = lay['CA'], lay['CB']; ncol = len(CA)
+    if gi is None:                         # 相对坐标：边索引取 (A,B)=(2,2)，块原点相应
+        A0, B0 = 2, 2
+        ox, oy = (n * A0, n * (B0 - 1)) if etype == 'x' else (n * (A0 - 1), n * B0)
+        gi = np.broadcast_to(ox + lay['lx'], (nE, m2)); gj = np.broadcast_to(oy + lay['ly'], (nE, m2))
+        EA = np.full(nE, A0); EB = np.full(nE, B0); fl = np.zeros((nE, m2), bool)
+    W = coarse_vals(gi, gj, n, (EA[:, None] + CA[None])[:, None, :], (EB[:, None] + CB[None])[:, None, :])
+    Wbc = np.zeros((nE, 2 * m2, 2 * ncol)); Wbc[:, :m2, :ncol] = W; Wbc[:, m2:, ncol:] = W
+    X = solve_block(K, lay['unk'], np.concatenate([fl, fl], 1), Wbc, rows_only=True)
+    return X[:, lay['sel']]
+
+
 class Images:
     """按粗单元索引取材料图像；无粒子的单元取 ersatz 图像。"""
     def __init__(self, cax, cay, il, im, ersatz_l, ersatz_m, n):
@@ -64,21 +132,24 @@ class Images:
         return (self.el, self.em) if k is None else (self.il[k], self.im[k])
 
 
-def solve_block(K, unk, fixed_loc, Wbc):
-    """批量块问题：K (nb,nd,nd)；unk (nd,) 未知自由度掩码；fixed_loc (nb,nd) 固定自由度掩码；
-    Wbc (nb,nd,nc) 边界自由度上的给定值。返回 (nb, nu, nc) 未知量的解。"""
+def solve_block(K, unk, fixed_loc, Wbc, rows_only=False):
+    """批量块问题：K (nb,nd,nd)（或 rows_only=True 时为只含未知行的 (nb,nu,nd)）；unk (nd,) 未知自由度掩码；
+    fixed_loc (nb,nd) 固定自由度掩码；Wbc (nb,nd,nc) 边界自由度上的给定值。返回 (nb, nu, nc) 未知量的解。"""
     U = np.where(unk)[0]; Bd = np.where(~unk)[0]
-    KUU = K[:, U][:, :, U]; KUB = K[:, U][:, :, Bd]
+    if rows_only:
+        KUU = K[:, :, U]; KUB = K[:, :, Bd]
+    else:
+        KUU = K[:, U][:, :, U]; KUB = K[:, U][:, :, Bd]
     fU = fixed_loc[:, U]; fB = fixed_loc[:, Bd]
     diag = np.einsum('cii->ci', KUU); scale = diag.max(1, keepdims=True)
     empty = (diag < 1e-12 * scale) & ~fU
-    rhs = -np.einsum('cij,cjk->cik', KUB, Wbc[:, Bd] * (~fB)[:, :, None])
+    rhs = -KUB @ (Wbc[:, Bd] * (~fB)[:, :, None])
     KUU = KUU * (~fU)[:, :, None] * (~fU)[:, None, :] + np.einsum('ci,ij->cij', (fU | empty) * scale + 1e-14 * scale, np.eye(len(U)))
     rhs = rhs * (~fU)[:, :, None] + (empty * scale)[:, :, None] * Wbc[:, U]
     return np.linalg.solve(KUU, rhs)
 
 
-def build_basis_os(xp, Vp, lam, mu, grid, n, fixed_nodes=None, ersatz=1e-3):
+def build_basis_os(xp, Vp, lam, mu, grid, n, fixed_nodes=None, ersatz=1e-3, edge_models=None, timer=None):
     nx = grid['nx']; nn = grid['nn']; cg = coarse_grid(grid, n); nc = cg['nc']; ncx = cg['ncx']
     cax, cay, il, im, _ = cell_images(xp, Vp, lam, mu, grid, n, ersatz)
     ims = Images(cax, cay, il, im, ersatz * np.min(lam), ersatz * np.min(mu), n)
@@ -88,7 +159,8 @@ def build_basis_os(xp, Vp, lam, mu, grid, n, fixed_nodes=None, ersatz=1e-3):
     occ = set(zip(cax.tolist(), cay.tolist()))
     rows = []; cols = []; vals = []
     strip_val = {}                       # (边类型, A, B) -> (全局节点, 值 (2*ns, 40), 列粗节点)
-    # ---------------- 2) 骨架条带：x 向边（条带 j=nB,nB+1，位于单元 (A,B-1) 与 (A,B) 之间） ----------------
+    # ---------------- 2) 骨架条带（x 向边：条带 j=nB,nB+1，位于单元 (A,B-1)/(A,B) 之间；y 向边同理） ----------------
+    T = timer
     for etype in ('x', 'y'):
         edges = set()
         for (A, B) in occ:
@@ -97,60 +169,33 @@ def build_basis_os(xp, Vp, lam, mu, grid, n, fixed_nodes=None, ersatz=1e-3):
             else:
                 edges.add((A, B)); edges.add((A + 1, B))
         edges = sorted(edges)
-        if etype == 'x':
-            sny, snx = 2 * n, n
-        else:
-            sny, snx = n, 2 * n
-        tl, tm, flat, my, mx = block_templates(sny, snx)
-        nE = len(edges)
-        IL = np.empty((nE, sny, snx)); IM = np.empty((nE, sny, snx))
-        org = np.empty((nE, 2), np.int64)
-        for k, (A, B) in enumerate(edges):
-            if etype == 'x':
-                l0, m0 = ims.get(A, B - 1); l1, m1 = ims.get(A, B)
-                IL[k] = np.concatenate([l0, l1], 0); IM[k] = np.concatenate([m0, m1], 0)
-                org[k] = (n * A, n * (B - 1))
-            else:
-                l0, m0 = ims.get(A - 1, B); l1, m1 = ims.get(A, B)
-                IL[k] = np.concatenate([l0, l1], 1); IM[k] = np.concatenate([m0, m1], 1)
-                org[k] = (n * (A - 1), n * B)
-        K = block_K(IL, IM, sny, snx)
-        lx = np.arange(my * mx) % mx; ly = np.arange(my * mx) // mx
-        # 未知量：两单元内部 + 条带；条带局部位置
-        if etype == 'x':
-            inx = (lx >= 2) & (lx <= n - 1)
-            unk_n = inx & (((ly >= 2) & (ly <= n - 1)) | ((ly >= n) & (ly <= n + 1)) | ((ly >= n + 2) & (ly <= 2 * n - 1)))
-            strip = inx & (ly >= n) & (ly <= n + 1)
-            Aoff = np.arange(-1, 3); Boff = np.arange(-2, 3)      # 粗节点（相对边的 (A,B)）
-        else:
-            iny = (ly >= 2) & (ly <= n - 1)
-            unk_n = iny & (((lx >= 2) & (lx <= n - 1)) | ((lx >= n) & (lx <= n + 1)) | ((lx >= n + 2) & (lx <= 2 * n - 1)))
-            strip = iny & (lx >= n) & (lx <= n + 1)
-            Aoff = np.arange(-2, 3); Boff = np.arange(-1, 3)
-        CA, CB = np.meshgrid(Aoff, Boff); CA = CA.ravel(); CB = CB.ravel(); ncol = len(CA)
+        if T: T.tic('os_edge_img')
+        IL, IM, org = edge_images(ims, edges, n, etype)
+        lay = edge_layout(n, etype)
         EA = np.array([e[0] for e in edges]); EB = np.array([e[1] for e in edges])
-        gi = org[:, 0:1] + lx[None]; gj = org[:, 1:2] + ly[None]                 # (nE, m2)
-        W = coarse_vals(gi, gj, n, (EA[:, None] + CA[None])[:, None, :], (EB[:, None] + CB[None])[:, None, :])  # (nE,m2,ncol)
-        m2 = my * mx
-        Wbc = np.zeros((nE, 2 * m2, 2 * ncol)); Wbc[:, :m2, :ncol] = W; Wbc[:, m2:, ncol:] = W
+        gi = org[:, 0:1] + lay['lx'][None]; gj = org[:, 1:2] + lay['ly'][None]
         gnode = gi + gj * nx
         fl = isfix[np.clip(gnode, 0, nn - 1)]
-        fixed_loc = np.concatenate([fl, fl], 1)
-        unk = np.concatenate([unk_n, unk_n])
-        X = solve_block(K, unk, fixed_loc, Wbc)                                   # (nE, nu, 2ncol)
-        U = np.where(unk)[0]
-        sel = np.where(np.concatenate([strip, strip])[U])[0]
-        snodes = np.where(strip)[0]
+        if T: T.tic('os_edge_solve')
+        if edge_models is not None and etype in edge_models:
+            Xs = edge_models[etype].predict(IL, IM)                                  # (nE, 2ns, 2ncol)
+            fb = np.where(fl.any(1))[0]                                              # 含固定节点 -> 精确回退
+            if len(fb):
+                Xs[fb] = edge_solve_exact(IL[fb], IM[fb], n, etype, gi[fb], gj[fb], EA[fb], EB[fb], fl[fb])
+        else:
+            Xs = edge_solve_exact(IL, IM, n, etype, gi, gj, EA, EB, fl)
+        if T: T.tic('os_other')
+        snodes = lay['snodes']; CA, CB = lay['CA'], lay['CB']
         for k, (A, B) in enumerate(edges):
-            strip_val[(etype, A, B)] = (gnode[k, snodes], X[k, sel],
+            strip_val[(etype, A, B)] = (gnode[k, snodes], Xs[k],
                                         np.concatenate([(A + CA) + (B + CB) * ncx, (A + CA) + (B + CB) * ncx + nc]))
     # ---------------- 3) 单元内部：边界 = 角块（粗函数）+ 四条自适应条带 ----------------
     cells = sorted(occ); nC = len(cells)
     tl, tm, flat, my, mx = block_templates(n, n); m2 = my * mx
     IL = np.stack([ims.get(A, B)[0] for A, B in cells]); IM = np.stack([ims.get(A, B)[1] for A, B in cells])
-    K = block_K(IL, IM, n, n)
     lx = np.arange(m2) % mx; ly = np.arange(m2) // mx
     inner = (lx >= 2) & (lx <= n - 1) & (ly >= 2) & (ly <= n - 1)
+    K = block_K_rows(IL, IM, n, n, np.where(np.concatenate([inner, inner]))[0])
     CA, CB = np.meshgrid(np.arange(-2, 4), np.arange(-2, 4)); CA = CA.ravel(); CB = CB.ravel(); ncol = 36
     A_ = np.array([c[0] for c in cells]); B_ = np.array([c[1] for c in cells])
     gi = n * A_[:, None] + lx[None]; gj = n * B_[:, None] + ly[None]; gnode = gi + gj * nx
@@ -171,7 +216,7 @@ def build_basis_os(xp, Vp, lam, mu, grid, n, fixed_nodes=None, ersatz=1e-3):
             Wbc[k][np.ix_(li, ci)] = V[:ns]; Wbc[k][np.ix_(li + m2, ci)] = V[ns:]
     fl = isfix[gnode]; fixed_loc = np.concatenate([fl, fl], 1)
     unk = np.concatenate([inner, inner])
-    X = solve_block(K, unk, fixed_loc, Wbc)                                       # (nC, 2ni, 72)
+    X = solve_block(K, unk, fixed_loc, Wbc, rows_only=True)                       # (nC, 2ni, 72)
     ni = inner.sum(); inn = np.where(inner)[0]
     # ---------------- 全局组装：角块/其它骨架 = 粗函数；条带 = 边解；内部 = 单元解 ----------------
     assigned = np.zeros(2 * nn, bool)
