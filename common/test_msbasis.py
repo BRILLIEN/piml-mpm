@@ -38,7 +38,7 @@ if __name__ == '__main__':
     idx, N, _, _ = shape_2d(X, grid)
     active = np.unique(idx)
     ok = True
-    for n, quad in [(4, 'particle'), (4, 'gauss'), (8, 'gauss')]:
+    for n, quad in [(4, 'particle'), (4, 'gauss'), (4, 'image'), (8, 'image')]:
         for label, lam, mu in [('均质', np.full(len(X), lm), np.full(len(X), mm)),
                                ('非均质', np.where(ph == 1, li, lm), np.where(ph == 1, mi, mm))]:
             t0 = time.perf_counter()
@@ -51,7 +51,7 @@ if __name__ == '__main__':
             print(f'n={n} {quad} {label}: ncell={B["ncell"]}, nnz(Φ)={B["Phi"].nnz}, 构造耗时 {t1:.3f}s,',
                   {k: f'{v:.2e}' for k, v in e.items()})
             ok &= e['PU'] < 1e-8 and e['rot'] < 1e-8
-            if label == '均质' and quad == 'gauss':
+            if label == '均质' and quad in ('gauss', 'image'):
                 ok &= e['lin'] < 1e-8
             else:
                 ok &= e['lin'] > 1e-6          # 非均质时一次场不应被再现

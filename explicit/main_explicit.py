@@ -46,8 +46,12 @@ def case_beam(cfg):
     P = dict(x=X, v=np.zeros((Np, 2)), m=np.full(Np, cfg['rho'] * Vp), V0=np.full(Np, Vp),
              lam=lam, mu=mu, phase=ph)
     sx, sy = cfg['grid_shift']
-    grid = make_grid(-2 * h + sx * h, L + 0.5 * L + sx * h, -L + sy * h, H + 0.3 * L + sy * h, h)
-    fixed = np.where(grid['xn'][:, 0] <= 1e-12 * h)[0]          # x<=0 的节点全部固定 -> 固支
+    # 背景网格：原点取 ox = -(8*3+0.5)h，使粗化比 n∈{2,4,8} 时粗节点线恰位于固支面 x=0；
+    # 范围覆盖梁的运动包络（x ≤ 1.2L，y ∈ [-0.7L, H+0.2L]），四周留足粗单元局部节点块所需的边。
+    ox = -24.5 * h + sx * h; oy = -0.7 * L - 20.5 * h + sy * h
+    nx = int(np.ceil((1.2 * L - ox) / h)) + 20; ny = int(np.ceil((H + 0.2 * L - oy) / h)) + 20
+    grid = make_grid(ox + 3 * h, ox + 3 * h + (nx - 7) * h, oy + 3 * h, oy + 3 * h + (ny - 7) * h, h)
+    fixed = np.where(grid['xn'][:, 0] <= 0.5 * h + 1e-9 * h)[0]   # x<=0.5h 的两列节点(-0.5h, 0.5h)及其左侧全部固定 -> 固支
     cmax = np.sqrt((max(li, lm) + 2 * max(mi, mm)) / cfg['rho'])
     dt = cfg['cfl'] * h / cmax
     # 监测粒子：自由端中点、固支端上下表面附近（根部应力最大）
