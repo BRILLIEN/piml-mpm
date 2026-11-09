@@ -41,6 +41,7 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
     hist = dict(t=[], Ek=[], Es=[], Wg=[], mon=[], n_int=0)
     n = int(n)
     step = 0
+    _, mat_id = np.unique(np.stack([lam, mu], 1), axis=0, return_inverse=True); mat_id = mat_id.ravel()
     while True:
         # ================= 区间更新 =================
         T.tic('int_shape')
@@ -90,6 +91,28 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
         fext = PhiT @ np.concatenate([mi * gx, mi * gy])
         Uc = np.zeros(2 * nc)
         F0 = [f.copy() for f in F]; Vp0 = Vcur
+        # ---- 粒子积分聚合（超降阶，免训练）：同一细区间块(agg×agg 个区间)内同一材料相的粒子合并为一个积分点 ----
+        agg = par.get('agg', 0)
+        if agg:
+            T.tic('int_agg')
+            h_ = grid['h']; ox_, oy_ = grid['origin']
+            sx_ = np.floor((x[:, 0] - ox_) / h_ + 0.5).astype(np.int64) // agg
+            sy_ = np.floor((x[:, 1] - oy_) / h_ + 0.5).astype(np.int64) // agg
+            key = (sx_ * 100003 + sy_) * 64 + mat_id
+            _, qi = np.unique(key, return_inverse=True); nq = qi.max() + 1
+            qV = np.bincount(qi, Vp0, nq)
+            xq = np.stack([np.bincount(qi, Vp0 * x[:, 0], nq), np.bincount(qi, Vp0 * x[:, 1], nq)], 1) / qV[:, None]
+            qF0 = [np.bincount(qi, Vp0 * f, nq) / qV for f in F0]
+            qlam = np.bincount(qi, Vp0 * lam, nq) / qV; qmu = np.bincount(qi, Vp0 * mu, nq) / qV
+            qidx, _, qdNx, qdNy = shape_2d(xq, grid, 'qbspline'); qfi = qidx.ravel()
+        else:
+            qidx, qdNx, qdNy, qfi, qF0, qV, qlam, qmu = idx, dNx, dNy, fi, F0, Vp0, lam, mu
+        hist.setdefault('nq', []).append(len(qV))
+
+        def full_F(Ucur):
+            uh_ = Phi @ Ucur; ux_ = uh_[:nn][idx]; uy_ = uh_[nn:][idx]
+            b11 = 1 + np.sum(ux_ * dNx, 1); b12 = np.sum(ux_ * dNy, 1); b21 = np.sum(uy_ * dNx, 1); b22 = 1 + np.sum(uy_ * dNy, 1)
+            return [b11 * F0[0] + b12 * F0[2], b11 * F0[1] + b12 * F0[3], b21 * F0[0] + b22 * F0[2], b21 * F0[1] + b22 * F0[3]]
         x0 = x.copy()
         nsub = min(K_int, nstep - step)
         hist['n_int'] += 1
@@ -101,7 +124,7 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
                 ux = np.sum(N * uh[:nn][idx], 1); uy = np.sum(N * uh[nn:][idx], 1)
                 vx = np.sum(N * vh[:nn][idx], 1); vy = np.sum(N * vh[nn:][idx], 1)
                 Ek = 0.5 * np.sum(m * (vx ** 2 + vy ** 2))
-                Es = np.sum(V0 * neo_energy(*F, lam, mu))
+                Es = np.sum(V0 * neo_energy(*full_F(Uc), lam, mu))
                 Wg = -np.sum(m * (gx * (x0[:, 0] + ux - P['x'][:, 0]) + gy * (x0[:, 1] + uy - P['x'][:, 1])))
                 hist['t'].append(step * dt); hist['Ek'].append(Ek); hist['Es'].append(Es); hist['Wg'].append(Wg)
                 if monitor is not None:
@@ -116,24 +139,24 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
             # ---- 细节点位移 -> 粒子位移梯度 ----
             T.tic('step_gather')
             uh = Phi @ Uc
-            uxp = uh[:nn][idx]; uyp = uh[nn:][idx]
-            D11 = np.sum(uxp * dNx, 1); D12 = np.sum(uxp * dNy, 1)
-            D21 = np.sum(uyp * dNx, 1); D22 = np.sum(uyp * dNy, 1)
+            uxp = uh[:nn][qidx]; uyp = uh[nn:][qidx]
+            D11 = np.sum(uxp * qdNx, 1); D12 = np.sum(uxp * qdNy, 1)
+            D21 = np.sum(uyp * qdNx, 1); D22 = np.sum(uyp * qdNy, 1)
             # ---- 本构 ----
             T.tic('step_const')
             a11 = 1 + D11; a12 = D12; a21 = D21; a22 = 1 + D22                # F_rel
-            F = [a11 * F0[0] + a12 * F0[2], a11 * F0[1] + a12 * F0[3],
-                 a21 * F0[0] + a22 * F0[2], a21 * F0[1] + a22 * F0[3]]
-            s11, s12, s22, J = neo_cauchy(*F, lam, mu)
+            Fq = [a11 * qF0[0] + a12 * qF0[2], a11 * qF0[1] + a12 * qF0[3],
+                  a21 * qF0[0] + a22 * qF0[2], a21 * qF0[1] + a22 * qF0[3]]
+            s11, s12, s22, J = neo_cauchy(*Fq, qlam, qmu)
             Jr = a11 * a22 - a12 * a21
             # P_rel = Jr σ F_rel^{-T}；F_rel^{-T} = [[a22,-a21],[-a12,a11]]/Jr
             P11 = s11 * a22 - s12 * a12; P12 = -s11 * a21 + s12 * a11
             P21 = s12 * a22 - s22 * a12; P22 = -s12 * a21 + s22 * a11
-            W = Vp0
+            W = qV
             # ---- 内力散射 ----
             T.tic('step_scatter')
-            fx = np.bincount(fi, (-(W * P11)[:, None] * dNx - (W * P12)[:, None] * dNy).ravel(), nn)
-            fy = np.bincount(fi, (-(W * P21)[:, None] * dNx - (W * P22)[:, None] * dNy).ravel(), nn)
+            fx = np.bincount(qfi, (-(W * P11)[:, None] * qdNx - (W * P12)[:, None] * qdNy).ravel(), nn)
+            fy = np.bincount(qfi, (-(W * P21)[:, None] * qdNx - (W * P22)[:, None] * qdNy).ravel(), nn)
             # ---- 粗尺度更新（辛欧拉 / 中心差分） ----
             T.tic('step_coarse')
             Fc = PhiT @ np.concatenate([fx, fy]) + fext
@@ -144,6 +167,7 @@ def run_explicit_ms(P, grid, par, n=4, K_int=50, quad='image', basis='ms', monit
                 T.stop(); raise FloatingPointError(f'J<=0 或非有限，step {step}')
         # ================= 区间末：粒子更新 =================
         T.tic('int_update')
+        F = full_F(Uc)                                   # 全体粒子变形梯度（每区间一次）
         uh = Phi @ Uc; vh = Phi @ Vc; dvh = Phi @ (Vc - Vstart)
         x[:, 0] = x0[:, 0] + np.sum(N * uh[:nn][idx], 1); x[:, 1] = x0[:, 1] + np.sum(N * uh[nn:][idx], 1)
         vpicx = np.sum(N * vh[:nn][idx], 1); vpicy = np.sum(N * vh[nn:][idx], 1)

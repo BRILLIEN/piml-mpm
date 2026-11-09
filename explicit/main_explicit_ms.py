@@ -50,6 +50,7 @@ def main():
     ap.add_argument('--basis', nargs='+', default=['ms', 'bilinear'])
     ap.add_argument('--dtfac', type=float, default=1.0, help='粗尺度时间步相对"同比例临界步"的额外系数')
     ap.add_argument('--skip_fine', action='store_true')
+    ap.add_argument('--agg', type=int, nargs='+', default=[0], help='粒子积分聚合块大小（0 关闭，1=每细区间每相一点，2=2x2 区间）')
     ap.add_argument('--edge_suffix', default='', help='PIML 边模型文件后缀（如 _c100）')
     ap.add_argument('--theta', type=float, default=0.3, help='小切割外推阈值（0 关闭）')
     ap.add_argument('--flip_ms', type=float, default=0.0, help='多尺度方法区间末粒子速度更新的 FLIP 比例（默认 0：PIC，仅在区间交界处传递一次）')
@@ -77,17 +78,17 @@ def main():
             dt = dt0 * ratio * a.dtfac
             nstep = int(round(a.tend / dt)); dt = a.tend / nstep
             out_every = max(1, int(round(a.out_every * dt0 / dt)))
-            for K in a.K:
-                name = f'{basis}{a.edge_suffix if basis.endswith("piml") else ""}_n{n}_K{K}'
+            for K, ag in [(K, ag) for K in a.K for ag in a.agg]:
+                name = f'{basis}{a.edge_suffix if basis.endswith("piml") else ""}_n{n}_K{K}' + (f'_agg{ag}' if ag else '')
                 print(f'[{name}] 临界步放大 {ratio:.2f}，dt={dt:.3e}，nstep={nstep}')
-                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms, extend=a.theta > 0, theta=a.theta, edge_suffix=a.edge_suffix)
+                par_r = dict(par, dt=dt, nstep=nstep, out_every=out_every, flip=a.flip_ms, extend=a.theta > 0, theta=a.theta, edge_suffix=a.edge_suffix, agg=ag)
                 try:
                     R = run_explicit_ms(P, grid, par_r, n=n, K_int=K, basis=basis, monitor=mon)
                 except FloatingPointError as e:
                     print('  失败：', e); out['runs'][name] = dict(failed=str(e)); continue
                 print(R['timer'].report(name))
                 np.savez(f'results/explicit/{tag}_{name}.npz', x=R['x'], **{'h_' + k: v for k, v in R['hist'].items() if k != 'n_int'})
-                out['runs'][name] = dict(dt=dt, nstep=nstep, dt_ratio=ratio, lam_f=lf, lam_c=lc, K=K, n=n, basis=basis,
+                out['runs'][name] = dict(dt=dt, nstep=nstep, dt_ratio=ratio, lam_f=lf, lam_c=lc, K=K, n=n, basis=basis, agg=ag, nq_mean=float(np.mean(R['hist']['nq'])), Np=len(P['m']),
                                          n_int=R['hist']['n_int'], nc=R['nc'], timing=R['timer'].t, t_total=R['timer'].total())
     # ---------- 四、数据整理 ----------
     json.dump(out, open(f'results/explicit/{tag}.json', 'w'), indent=1, ensure_ascii=False, default=float)
