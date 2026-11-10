@@ -1,3 +1,2 @@
-results/**/*.npz
 __pycache__/
 *.pyc
