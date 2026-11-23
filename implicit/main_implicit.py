@@ -114,7 +114,8 @@ def main():
                 em = {e: PIMLEdge(f'ml/models/edge_n{a.n}_{e}_c100.npz') for e in 'xy'}
             lt = 10.0 ** (-int(name.split('_tol')[1])) if '_tol' in name else 1e-2
             jv = 'assemble' if '_asm' in name else ('K0' if '_k0' in name else 'fd')
-            R = run_implicit_dd(P, grid, dict(par, lin_tol=lt, jv=jv), n=a.n, edge_models=em, verbose=not a.quiet)
+            pe = int(name.split('_pc')[1].split('_')[0]) if '_pc' in name else 1      # dd_pc5：每 5 个载荷步重建预条件器
+            R = run_implicit_dd(P, grid, dict(par, lin_tol=lt, jv=jv, pc_every=pe), n=a.n, edge_models=em, verbose=not a.quiet)
         elif name.startswith('red_'):
             # 约化 Newton：red_{os|ms}[_piml][_agg]
             from implicit.mpm_implicit_red import run_implicit_reduced

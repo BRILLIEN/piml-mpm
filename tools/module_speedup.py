@@ -8,7 +8,7 @@
 用法：python3 tools/module_speedup.py results/implicit/ired40_h0025.json"""
 import json, sys
 M_KEYS = ['basis', 'agg', 'pattern', 'tangent', 'project', 'solve', 'precond', 'precond_basis', 'precond_coarse', 'precond_ilu',
-          'pc_basis', 'pc_patch', 'pc_coarse', 'pcg', 'pcg_jv']
+          'pc_basis', 'pc_patch', 'pc_coarse', 'pcg', 'pcg_jv', 'pc_map']
 
 
 def split(t):

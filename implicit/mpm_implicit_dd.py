@@ -63,7 +63,9 @@ def run_implicit_dd(P, grid, par, n=8, basis='os', edge_models=None, theta=0.1, 
     F = [np.ones(Np), np.zeros(Np), np.zeros(Np), np.ones(Np)]
     gx, gy = par['gravity']; nload = par['nload']; tol = par.get('tol', 1e-8); maxit = par.get('maxit', 60)
     lin_tol = par.get('lin_tol', 1e-2)
-    T = Timer(); hist = dict(step=[], newton=[], lin_it=[], res=[], tip=[], Es=[], ndof=[], npatch=[])
+    T = Timer(); hist = dict(step=[], newton=[], lin_it=[], res=[], tip=[], Es=[], ndof=[], npatch=[], pc_built=[])
+    pc_every = par.get('pc_every', 1)          # 预条件器每 pc_every 个载荷步重建一次（其余步复用，按全局自由度编号映射）
+    PC = None
     for ls in range(1, min(nload, par.get('stop_after', nload)) + 1):
         fac = ls / nload
         T.tic('shape')
@@ -120,8 +122,22 @@ def run_implicit_dd(P, grid, par, n=8, basis='os', edge_models=None, theta=0.1, 
                 break
             if it == maxit:
                 T.stop(); raise RuntimeError(f'载荷步 {ls} 未收敛 {rn:.2e}')
+            gids = fdofs[good_rows]                                       # 当前约化未知量的全局自由度编号
+            if K0 is None and PC is not None and (ls - PC['ls']) % pc_every != 0:
+                # ---------- 复用上次构造的预条件器（不组装切线、不重建基与局部分解） ----------
+                T.tic('pc_map')
+                pos = np.searchsorted(PC['gids'], gids); pos = np.clip(pos, 0, len(PC['gids']) - 1)
+                ok = PC['gids'][pos] == gids; posok = pos[ok]; nold = len(PC['gids']); dsc = PC['dmean']
+
+                def Mapply_map(r, posok=posok, ok=ok, nold=nold, dsc=dsc):
+                    ro = np.zeros(nold); ro[posok] = r[ok]
+                    zo = PC['apply'](ro)
+                    z = r / dsc; z[ok] = zo[posok]
+                    return z
+                Mop = LinearOperator((len(gids), len(gids)), matvec=Mapply_map, dtype=float)
+                K0 = 'reused'
             if K0 is None:
-                # ---------- 预条件器构造（每载荷步一次） ----------
+                # ---------- 预条件器构造（每 pc_every 个载荷步一次） ----------
                 T.tic('tangent')
                 dX = (a22[:, None] * dNx - a21[:, None] * dNy) / Jr[:, None]; dY = (-a12[:, None] * dNx + a11[:, None] * dNy) / Jr[:, None]
                 K = assemble_tangent(pat, dX, dY, Jr * Vp0, lam / J, (mu - lam * np.log(J)) / J, s11, s12, s22)
@@ -143,6 +159,8 @@ def run_implicit_dd(P, grid, par, n=8, basis='os', edge_models=None, theta=0.1, 
                         z[b] += lu.solve(r[b])
                     return z + Pc @ clu.solve(PcT @ r)
                 Mop = LinearOperator(K0.shape, matvec=Mapply, dtype=float)
+                PC = dict(ls=ls, gids=gids.copy(), apply=Mapply, dmean=float(np.mean(K0.diagonal())), npatch=len(blocks))
+                hist['pc_built'].append(ls)
             if jv_mode == 'assemble':          # 每次迭代组装当前切线（完整 Newton，预条件器仍来自 K0）
                 T.tic('tangent')
                 dX = (a22[:, None] * dNx - a21[:, None] * dNy) / Jr[:, None]; dY = (-a12[:, None] * dNx + a11[:, None] * dNy) / Jr[:, None]
@@ -162,8 +180,8 @@ def run_implicit_dd(P, grid, par, n=8, basis='os', edge_models=None, theta=0.1, 
                     out = (fint_red(a_, s_) - fint0) / eps
                     T.tic('pcg')
                     return out
-                Aop = LinearOperator(K0.shape, matvec=jv, dtype=float)
-            else:                              # 'K0'：修正 Newton（冻结切线）
+                Aop = LinearOperator((len(Rr), len(Rr)), matvec=jv, dtype=float)
+            else:                              # 'K0'：修正 Newton（冻结切线；仅在本步构造了 K0 时可用）
                 Aop = K0
             T.tic('pcg')
             cnt = [0]
@@ -174,9 +192,9 @@ def run_implicit_dd(P, grid, par, n=8, basis='os', edge_models=None, theta=0.1, 
         x[:, 0] += np.sum(N * du[:nn][idx], 1); x[:, 1] += np.sum(N * du[nn:][idx], 1)
         hist['step'].append(ls); hist['newton'].append(it); hist['lin_it'].append(lin_total); hist['res'].append(rn)
         hist['tip'].append(x[par['monitor']].ravel().copy()); hist['Es'].append(float(np.sum(V0 * neo_energy(*F, lam, mu))))
-        hist['ndof'].append(E.shape[1]); hist['npatch'].append(len(blocks))
+        hist['ndof'].append(E.shape[1]); hist['npatch'].append(PC['npatch'] if PC else 0)
         if verbose:
-            print(f'[载荷步 {ls}] Newton {it}，PCG {lin_total}，块 {len(blocks)}', flush=True)
+            print(f'[载荷步 {ls}] Newton {it}，PCG {lin_total}，预条件器构造于第 {PC["ls"]} 步', flush=True)
     T.stop()
     s11, s12, s22, J = neo_cauchy(*F, lam, mu)
     return dict(x=x, F=np.stack(F, 1), s=np.stack([s11, s12, s22], 1), hist={k: np.array(v) for k, v in hist.items()},
