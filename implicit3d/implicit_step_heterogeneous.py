@@ -186,7 +186,7 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
             timer['tangent'] += time.perf_counter() - t
         if K is None or not frozen:
             t = time.perf_counter()
-            K = beam_tangent(patch, T, gamma, grid, pat, inertia)
+            K = beam_tangent(patch, T, gamma, grid, pat, inertia, use_cache=not frozen)
             timer['tangent'] += time.perf_counter() - t
             if reuseM > 0:
                 cache.update(Ktan=sp.csr_matrix((pat['last_data'], pat['indices'], pat['indptr']), shape=K.shape),

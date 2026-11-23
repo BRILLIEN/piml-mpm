@@ -216,7 +216,7 @@ def beam_tangent_pattern(grid, active):
     order = np.argsort(key.reshape(nfree, -1), 1, kind='stable')
     cnt = present.reshape(nfree, -1).sum(1)
     indptr = np.r_[0, np.cumsum(cnt)]
-    posmap = -np.ones((nfree, 375), np.int64)
+    posmap = -np.ones((nfree, 375), np.int32)
     rank = np.empty_like(order); np.put_along_axis(rank, order, np.arange(375)[None, :].repeat(nfree, 0), 1)
     flat_present = present.reshape(nfree, -1)
     posmap[flat_present] = (indptr[:-1, None] + rank)[flat_present]
@@ -226,12 +226,12 @@ def beam_tangent_pattern(grid, active):
                 nnz=int(indptr[-1]))
 
 
-def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):  # noqa
+def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024, use_cache=True):  # noqa
     """组装活动自由度上的有效切线 K_eff = K_tan + diag(inertia)（CSR，对称）。逐块（≤chunk 个支撑单元）积分并直接累加到 CSR 数据。"""
     dims = grid['dims']; amap = pat['amap']; posmap = pat['posmap']
     data = np.zeros(pat['nnz'])
     nodexyz = grid['node']
-    cache = pat.setdefault('pos_cache', {})                                    # 步内粒子分组不变 ⇒ 位置映射每步只算一次
+    cache = pat.setdefault('pos_cache', {}) if use_cache else {}               # 步内粒子分组不变 ⇒ 位置映射每步只算一次（仅在步内多次组装时有益）
     for ib, B in enumerate(patch):
         nc_all = B['id'].shape[1]
         for c0 in range(0, nc_all, chunk):
@@ -252,10 +252,11 @@ def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):  # noqa
                 m = valid[:, None, None, None, :] & valid[None, None, :, None, :] & (pos >= 0)
                 m = m.transpose(4, 0, 1, 2, 3).reshape(-1)                      # 与 Ke (nc,a,i,b,k) 内存顺序对齐
                 pos = pos.transpose(4, 0, 1, 2, 3).reshape(-1)
-                sel = np.flatnonzero(m)
-                cache[key] = (sel, pos[sel].astype(np.int32))
-            sel, ps = cache[key]
-            data += np.bincount(ps, Ke.reshape(-1)[sel], pat['nnz'])
+                cache[key] = np.where(m, pos, pat['nnz']).astype(np.int32)       # 无效项指向哑槽 nnz（int32，省内存）
+            ps = cache[key]
+            if not use_cache:
+                del cache[key]
+            data += np.bincount(ps, Ke.reshape(-1), pat['nnz'] + 1)[:-1]
     K = sp.csr_matrix((data, pat['indices'], pat['indptr']), shape=(pat['nfree'], pat['nfree']))
     pat['last_data'] = data                                      # 不含惯性项的切线数据（供重叠块直接取子矩阵）
     return K + sp.diags(inertia)
