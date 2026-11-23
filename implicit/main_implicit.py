@@ -105,7 +105,17 @@ def main():
     for name in a.solvers:
         print(f'===== {name} =====')
         t0 = time.perf_counter()
-        if name.startswith('red_'):
+        if name.startswith('dd'):
+            # 两级区域分解预条件的非精确修正 Newton：dd[_piml][_tolX]，X 为 PCG 相对容差的负指数（默认 2 ⇒ 1e-2）
+            from implicit.mpm_implicit_dd import run_implicit_dd
+            em = None
+            if '_piml' in name:
+                from ml.train_edge import PIMLEdge
+                em = {e: PIMLEdge(f'ml/models/edge_n{a.n}_{e}_c100.npz') for e in 'xy'}
+            lt = 10.0 ** (-int(name.split('_tol')[1])) if '_tol' in name else 1e-2
+            jv = 'assemble' if '_asm' in name else ('K0' if '_k0' in name else 'fd')
+            R = run_implicit_dd(P, grid, dict(par, lin_tol=lt, jv=jv), n=a.n, edge_models=em, verbose=not a.quiet)
+        elif name.startswith('red_'):
             # 约化 Newton：red_{os|ms}[_piml][_agg]
             from implicit.mpm_implicit_red import run_implicit_reduced
             em = None

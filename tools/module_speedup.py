@@ -7,7 +7,8 @@
 三个加速比：S_NL = M_原始 / M_非学习；S_ML = M_非学习 / M_PIML（同一目标模块上的额外加速）；S_tot = 完整_原始 / 完整_PIML。
 用法：python3 tools/module_speedup.py results/implicit/ired40_h0025.json"""
 import json, sys
-M_KEYS = ['basis', 'agg', 'pattern', 'tangent', 'project', 'solve', 'precond', 'precond_basis', 'precond_coarse', 'precond_ilu']
+M_KEYS = ['basis', 'agg', 'pattern', 'tangent', 'project', 'solve', 'precond', 'precond_basis', 'precond_coarse', 'precond_ilu',
+          'pc_basis', 'pc_patch', 'pc_coarse', 'pcg', 'pcg_jv']
 
 
 def split(t):
