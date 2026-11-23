@@ -208,21 +208,16 @@ def beam_tangent_pattern(grid, active):
     ok = np.all((nb_xyz >= 0) & (nb_xyz < dims), 2)
     nb = np.where(ok, nb_xyz @ stride, 0)
     nba = np.where(ok, amap[nb], -1)                                                # 邻居活动序号
-    cols = np.where(nba[:, None, :] >= 0, 3 * nba[:, None, :] + np.arange(3)[None, :, None], -1)   # (na,3,125)
-    cols = np.repeat(cols[:, None], 3, 1).reshape(nfree, 3, 125)                    # 行 = 3*node+i
-    present = cols >= 0
-    # 行内列号须递增：列号 = 3*nba + k，按 (nba, k) 排序。
-    key = np.where(present, cols, np.iinfo(np.int64).max)
-    order = np.argsort(key.reshape(nfree, -1), 1, kind='stable')
-    cnt = present.reshape(nfree, -1).sum(1)
+    # 列按 (邻居偏移 o 外层, 分量 k 内层) 排列：活动节点按网格编号递增、偏移按 (dz,dy,dx) 字典序 ⇒ 列号天然递增，无需排序
+    cols = np.where(nba[:, :, None] >= 0, 3 * nba[:, :, None] + np.arange(3)[None, None, :], -1)   # (na,125,3)
+    present = np.repeat((cols >= 0)[:, None], 3, 1).reshape(nfree, 375)                          # 行 = 3*node+i
+    cnt = present.sum(1)
     indptr = np.r_[0, np.cumsum(cnt)]
-    posmap = -np.ones((nfree, 375), np.int32)
-    rank = np.empty_like(order); np.put_along_axis(rank, order, np.arange(375)[None, :].repeat(nfree, 0), 1)
-    flat_present = present.reshape(nfree, -1)
-    posmap[flat_present] = (indptr[:-1, None] + rank)[flat_present]
-    indices = np.take_along_axis(key.reshape(nfree, -1), order, 1)
-    indices = indices[np.arange(375)[None, :] < cnt[:, None]].astype(np.int32)
-    return dict(indptr=indptr, indices=indices, posmap=posmap.reshape(nfree, 3, 125), amap=amap, nfree=nfree,
+    rank = np.cumsum(present, 1) - 1
+    posmap = np.where(present, indptr[:-1, None] + rank, -1).astype(np.int32)                  # (nfree, 125*3) 顺序 (o,k)
+    indices = np.repeat(cols[:, None], 3, 1).reshape(nfree, 375)[present].astype(np.int32)
+    posmap = posmap.reshape(nfree, 125, 3).transpose(0, 2, 1).copy()                           # → (nfree, 3, 125)
+    return dict(indptr=indptr, indices=indices, posmap=posmap, amap=amap, nfree=nfree,
                 nnz=int(indptr[-1]))
 
 
