@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# 百万级规模的逐粒子状态文件（>100MB，超过 GitHub 单文件上限）只保留在本地；其计时/精度指标见同名 .json
+results/implicit/pA_h000625_*.npz

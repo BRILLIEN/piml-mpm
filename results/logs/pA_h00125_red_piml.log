@@ -1,0 +1,15 @@
+[I-beam] Np=512000，网格节点=925605，载荷步=40，粗化比=8
+===== red_os_piml_agg =====
+--- 计时分解 red_os_piml_agg  总计 91.323 s ---
+  shape                      1.039 s    1.14 %
+  basis                     18.618 s   20.39 %
+  agg                        0.208 s    0.23 %
+  pattern                    5.180 s    5.67 %
+  const                      0.901 s    0.99 %
+  resid                      0.793 s    0.87 %
+  tangent                   28.158 s   30.83 %
+  project                   34.173 s   37.42 %
+  solve                      1.559 s    1.71 %
+  update                     0.693 s    0.76 %
+  总耗时 91.99s，Newton 总数 8，线性迭代总数 0，自由端最终 y = 0.074635，与首个求解器的粒子位置 RMS 差 0.00e+00，自由端挠度相对误差 0.0000，应力 L2 误差 0.0000，求解自由度 4030
+保存 -> results/implicit/pA_h00125_red_piml.json
