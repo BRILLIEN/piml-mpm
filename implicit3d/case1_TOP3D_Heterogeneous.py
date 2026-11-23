@@ -53,12 +53,13 @@ def main():
     # ============ 三、求解过程 ============
     S = {m: copy.deepcopy(s0) for m in a.modes}
     rows = {m: [] for m in a.modes}
+    caches = {m: {} for m in a.modes}                      # 各方案独立的跨步缓存（切线复用）
     errs = {m: [] for m in a.modes if m != 'fine_pcg'}
     show_steps = set(np.unique(np.round(np.linspace(1, p['steps'], min(5, p['steps']))).astype(int)).tolist())
     for step in range(1, p['steps'] + 1):
         order = a.modes[(step - 1) % len(a.modes):] + a.modes[:(step - 1) % len(a.modes)]   # 逐步轮换执行顺序
         for m in order:
-            S[m], _, row = implicit_step_heterogeneous(S[m], {}, grid, p, m, step, step in show_steps)
+            S[m], caches[m], row = implicit_step_heterogeneous(S[m], caches[m], grid, p, m, step, step in show_steps)
             rows[m].append({k: v for k, v in row.items() if k != 'res'} | dict(res=[list(map(float, q)) for q in row['res']]))
         if 'fine_pcg' in S:
             for m in errs:

@@ -133,16 +133,24 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
     fgravity = np.outer(p['gravity'], mass[active]).ravel(order='F')
     drive = p['dt'] * inertia * grid_v[:, active].ravel(order='F') - f0[:, active].ravel(order='F') + 2 * fgravity
     timer['resid_const'] += time.perf_counter() - t
+    # 跨载荷步复用一致切线（名称含 _reuseM：每 M 步重建；活动集变化时提前重建）；残余力始终精确
+    reuseM = int(mode.split('_reuse')[1].split('_')[0]) if '_reuse' in mode else 0
+    reuse_ok = (reuseM > 0 and cache.get('Ktan_step') is not None and (step - cache['Ktan_step']) < reuseM
+                and np.array_equal(cache.get('active'), active))
     t = time.perf_counter()
-    pat = beam_tangent_pattern(grid, active)
+    if reuse_ok:
+        pat = cache['pat']
+    else:
+        pat = beam_tangent_pattern(grid, active)
     timer['pattern'] += time.perf_counter() - t
     def trace(shift):
         db_, di_, Nb_, bn_, in_ = BasicMat_trace(grid['node'], active, grid['fixed'], grid['dims'], p['fine'], shift)
         own = (grid['node'][active[in_]] - shift) // p['fine']
         nblk = np.ceil(grid['dims'] / p['fine']).astype(np.int64) + 1
         return db_, di_, Nb_, np.repeat(own[:, 0] + nblk[0] * (own[:, 1] + nblk[1] * own[:, 2]), 3)
-    base_mode = mode.replace('_loose', '').replace('_frozen', '')
-    frozen = '_frozen' in mode               # 步内冻结一致切线（每步只组装一次；残余力始终精确）
+    import re as _re
+    base_mode = _re.sub(r'_reuse\d+', '', mode).replace('_loose', '').replace('_frozen', '')
+    frozen = '_frozen' in mode or '_reuse' in mode   # 步内冻结一致切线（每步至多组装一次；残余力始终精确）
     K = None
     if base_mode in ('sub_current', 'subpc', 'subpc2', 'subpc3'):
         t = time.perf_counter()
@@ -172,10 +180,18 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
             break
         assert it < 40, f'Newton stagnation {mode} step {step}'
         # ---------- 当轮一致切线 ----------
+        if K is None and reuse_ok:
+            t = time.perf_counter()
+            K = cache['Ktan'] + sp.diags(inertia)                  # 复用旧切线 + 当前步惯性项
+            timer['tangent'] += time.perf_counter() - t
         if K is None or not frozen:
             t = time.perf_counter()
             K = beam_tangent(patch, T, gamma, grid, pat, inertia)
             timer['tangent'] += time.perf_counter() - t
+            if reuseM > 0:
+                cache.update(Ktan=sp.csr_matrix((pat['last_data'], pat['indices'], pat['indptr']), shape=K.shape),
+                             Ktan_step=step, active=active.copy(), pat=pat)
+                tangentBuilds_flag = True
         if base_mode in ('fine_pcg', 'fine_pcg_inexact'):
             t = time.perf_counter()
             df, nit = solve_pcg_beam(K, K.diagonal(), r, tol=(p.get('subpc_tol', 3e-10) if base_mode == 'fine_pcg_inexact' else 3e-10))
