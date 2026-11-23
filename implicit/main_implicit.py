@@ -88,11 +88,15 @@ def main():
     ap.add_argument('--quiet', action='store_true')
     ap.add_argument('--fext', type=float, default=BASE['fine_extend'])
     ap.add_argument('--ls', action='store_true')
+    ap.add_argument('--stop_after', type=int, default=0, help='只运行前 k 个载荷步（0=全部），用于大规模目标模块计时')
+    ap.add_argument('--ppc', type=int, default=BASE['ppc'])
     ap.add_argument('--Ei', type=float, default=BASE['E_i'], help='夹杂杨氏模量（对比度 = E_i/E_m）')
     a = ap.parse_args()
-    cfg = dict(BASE, h=a.h, nload=a.nload, n_coarse=a.n, gravity=(0.0, a.g), fine_extend=a.fext, E_i=a.Ei)
+    cfg = dict(BASE, h=a.h, nload=a.nload, n_coarse=a.n, gravity=(0.0, a.g), fine_extend=a.fext, E_i=a.Ei, ppc=a.ppc)
     P, grid, par = case_beam_static(cfg)
     par['linesearch'] = a.ls
+    if a.stop_after:
+        par['stop_after'] = a.stop_after
     tag = a.tag or f'imp_h{a.h}_n{a.n}_L{a.nload}'
     os.makedirs('results/implicit', exist_ok=True)
     out = dict(cfg={k: v for k, v in cfg.items()}, Np=len(P['m']), runs={})
@@ -123,7 +127,8 @@ def main():
         if tipref is None:
             tipref = H_tip0 = R['hist']['tip'][-1].copy()
         tip_err = float(abs(R['hist']['tip'][-1][1] - tipref[1]) / abs(tipref[1] - P['x'][par['monitor'][0], 1]))
-        out['runs'][name] = dict(wall=wall, timing=R['timer'].t, newton=H['newton'].tolist(), lin_it=H['lin_it'].tolist(),
+        import resource
+        out['runs'][name] = dict(maxrss_GB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, wall=wall, timing=R['timer'].t, newton=H['newton'].tolist(), lin_it=H['lin_it'].tolist(),
                                  ndof=H['ndof'].tolist(), tip=H['tip'].tolist(), Es=H['Es'].tolist(), x_rms_vs_first=err,
                                  tip_err_vs_first=tip_err)
         print(f'  总耗时 {wall:.2f}s，Newton 总数 {H["newton"].sum()}，线性迭代总数 {H["lin_it"].sum()}，'

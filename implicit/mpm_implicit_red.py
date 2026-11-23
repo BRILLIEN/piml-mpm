@@ -16,7 +16,7 @@ from common.shape import shape_2d
 from common.material import neo_cauchy, neo_energy
 from common.timer import Timer
 from common.msbasis import extend_small_cut
-from implicit.mpm_implicit import _pattern, _tangent_vals
+from implicit.mpm_implicit import _pattern, _pattern_struct, _tangent_vals, assemble_tangent
 
 
 def coarse_tangent_direct(qidx, qdx, qdy, Pf_x, Pf_y, coef, qV, Jr, lam_, mu_, s11, s12, s22, nn):
@@ -48,7 +48,7 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
     gx, gy = par['gravity']; nload = par['nload']; tol = par.get('tol', 1e-8); maxit = par.get('maxit', 30)
     _, mat_id = np.unique(np.stack([lam, mu], 1), axis=0, return_inverse=True); mat_id = mat_id.ravel()
     T = Timer(); hist = dict(newton=[], ndof=[], nq=[], tip=[])
-    for ls in range(1, nload + 1):
+    for ls in range(1, min(nload, par.get('stop_after', nload)) + 1):   # stop_after：只计时前若干载荷步（大规模模块计时）
         fac = ls / nload
         T.tic('shape')
         idx, N, dNx, dNy = shape_2d(x, grid, 'qbspline'); fi = idx.ravel()
@@ -87,7 +87,7 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
             Pg = (E @ Pf).tocsr(); Pf_x = Pg[:nn]; Pf_y = Pg[nn:]
         else:
             free_map = -np.ones(2 * nn, np.int64); free_map[fdofs] = np.arange(len(fdofs))
-            pat = _pattern(qidx, nn, free_map)
+            pat = _pattern_struct(qidx, nn, free_map, grid['nx']) if par.get('struct_pattern', True) else _pattern(qidx, nn, free_map)
         fext = PfT @ np.concatenate([mi * gx * fac, mi * gy * fac])[fdofs]
         U = np.zeros(ncd)
         for it in range(maxit + 1):
@@ -121,9 +121,7 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
                 continue
             T.tic('tangent')
             dX = (a22[:, None] * qdx - a21[:, None] * qdy) / Jr[:, None]; dY = (-a12[:, None] * qdx + a11[:, None] * qdy) / Jr[:, None]
-            vals = _tangent_vals(dX, dY, Jr * qV, ql / J, (qm - ql * np.log(J)) / J, s11, s12, s22)
-            K = sp.csr_matrix((np.bincount(pat['inv'], vals[pat['keep']], pat['nnz']), pat['indices'], pat['indptr']),
-                              shape=(pat['nf'], pat['nf']))
+            K = assemble_tangent(pat, dX, dY, Jr * qV, ql / J, (qm - ql * np.log(J)) / J, s11, s12, s22)
             T.tic('project')
             Kc = (PfT @ K @ Pf).tocsc()
             T.tic('solve')

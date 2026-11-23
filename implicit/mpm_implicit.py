@@ -37,6 +37,66 @@ def _pattern(idx, nn, free_map):
     return dict(keep=keep, inv=inv, nnz=len(ukey), indptr=indptr, indices=cols.astype(np.int32), nf=nf)
 
 
+def _pattern_struct(idx, nn, free_map, nx, chunk=100000):
+    """结构化网格固定模板的稀疏结构（无排序）：二次 B 样条下节点 a、b 耦合当且仅当 |Δi|,|Δj| ≤ 2，
+    故每个自由度行最多 2 分量 × 5×5 = 50 列。先由活跃自由度建立 (nf, 2, 25) 模板位置表，
+    再按"行、列分量、偏移"直接算出每个粒子贡献在 CSR 数据中的位置。返回格式与 _pattern 相同。"""
+    nf = int(free_map.max()) + 1
+    fdofs = np.where(free_map >= 0)[0]
+    node = fdofs % nn
+    ix = node % nx; iy = node // nx
+    off = np.arange(25); dx = off % 5 - 2; dy = off // 5 - 2
+    nb = node[:, None] + dx[None] + dy[None] * nx                      # (nf, 25) 邻居节点
+    ok = (ix[:, None] + dx[None] >= 0) & (ix[:, None] + dx[None] < nx) & (nb >= 0) & (nb < nn)
+    nbc = np.clip(nb, 0, nn - 1)
+    cols = np.stack([np.where(ok, free_map[nbc], -1), np.where(ok, free_map[nbc + nn], -1)], 1)   # (nf, 2, 25)
+    present = cols >= 0
+    cnt = present.reshape(nf, -1).sum(1)
+    indptr = np.concatenate([[0], np.cumsum(cnt)])
+    posmap = np.full(cols.shape, -1, np.int64)
+    posmap[present] = np.arange(indptr[-1])                            # 行优先、(分量, dy, dx) 顺序 ⇒ 列号递增
+    indices = cols[present].astype(np.int32)
+    # 每个粒子贡献 (行节点 a, 行分量 ca) × (列节点 b, 列分量 cb)；按粒子分块，位置用 int32（-1 = 固定自由度，丢弃）
+    Np = idx.shape[0]; chunks = []
+    for s0 in range(0, Np, chunk):
+        ic = idx[s0:s0 + chunk]; nc_ = len(ic)
+        a = np.broadcast_to(ic[:, :, None], (nc_, 9, 9)); b = np.broadcast_to(ic[:, None, :], (nc_, 9, 9))
+        o = ((b % nx) - (a % nx) + 2) + 5 * ((b // nx) - (a // nx) + 2)
+        parts = []
+        for ca, cb in ((0, 0), (0, 1), (1, 0), (1, 1)):
+            r = free_map[a + ca * nn]
+            parts.append(np.where(r >= 0, posmap[np.maximum(r, 0), cb, o], -1).astype(np.int32))
+        chunks.append((s0, s0 + nc_, np.stack(parts, 1).reshape(-1)))     # 顺序与 _tangent_vals 的 [xx,xy,yx,yy] 一致（逐粒子）
+    return dict(chunks=chunks, nnz=int(indptr[-1]), indptr=indptr, indices=indices, nf=nf)
+
+
+def assemble_tangent(pat, dX, dY, v, lam_, mu_, s11, s12, s22):
+    """按 pat 组装一致切线（CSR）。支持分块模板（_pattern_struct）与旧的排序模板（_pattern）。"""
+    if 'chunks' not in pat:
+        vals = _tangent_vals(dX, dY, v, lam_, mu_, s11, s12, s22)
+        data = np.bincount(pat['inv'], vals[pat['keep']], pat['nnz'])
+    else:
+        data = np.zeros(pat['nnz'])
+        for s0, s1, pos in pat['chunks']:
+            sl = slice(s0, s1)
+            vals = _tangent_vals_pp(dX[sl], dY[sl], v[sl], lam_[sl], mu_[sl], s11[sl], s12[sl], s22[sl])
+            ok = pos >= 0
+            data += np.bincount(pos[ok], vals[ok], pat['nnz'])
+    return sp.csr_matrix((data, pat['indices'], pat['indptr']), shape=(pat['nf'], pat['nf']))
+
+
+def _tangent_vals_pp(dX, dY, v, lam_, mu_, s11, s12, s22):
+    """同 _tangent_vals，但按"逐粒子 [xx,xy,yx,yy]"顺序展平（与分块模板一致）。"""
+    V = v[:, None, None]; L = lam_[:, None, None]; M = mu_[:, None, None]
+    gxi = dX[:, :, None]; gyi = dY[:, :, None]; gxj = dX[:, None, :]; gyj = dY[:, None, :]
+    geo = V * (gxi * (s11[:, None, None] * gxj + s12[:, None, None] * gyj) + gyi * (s12[:, None, None] * gxj + s22[:, None, None] * gyj))
+    Kxx = V * ((L + 2 * M) * gxi * gxj + M * gyi * gyj) + geo
+    Kxy = V * (L * gxi * gyj + M * gyi * gxj)
+    Kyx = V * (L * gyi * gxj + M * gxi * gyj)
+    Kyy = V * ((L + 2 * M) * gyi * gyj + M * gxi * gxj) + geo
+    return np.stack([Kxx, Kxy, Kyx, Kyy], 1).reshape(-1)
+
+
 def _tangent_vals(dX, dY, v, lam_, mu_, s11, s12, s22):
     """每粒子 4 个 9x9 块（xx, xy, yx, yy）的切线值。dX,dY 为当前构形梯度。"""
     V = v[:, None, None]; L = lam_[:, None, None]; M = mu_[:, None, None]
@@ -60,7 +120,7 @@ def run_implicit(P, grid, par, solver='direct', precond_builder=None, verbose=Tr
     tol = par.get('tol', 1e-8); maxit = par.get('maxit', 30); lin_tol = par.get('lin_tol', 1e-10)
     T = Timer()
     hist = dict(step=[], newton=[], lin_it=[], res=[], tip=[], Es=[], ndof=[])
-    for ls in range(1, nload + 1):
+    for ls in range(1, min(nload, par.get('stop_after', nload)) + 1):   # stop_after：只计时前若干载荷步（大规模模块计时）
         fac = ls / nload
         # ---------- 载荷步初始化 ----------
         T.tic('shape')
@@ -70,7 +130,7 @@ def run_implicit(P, grid, par, solver='direct', precond_builder=None, verbose=Tr
         act = np.zeros(2 * nn, bool); act[np.concatenate([idx.ravel(), idx.ravel() + nn])] = True
         act[par['fixed_nodes']] = False; act[np.asarray(par['fixed_nodes']) + nn] = False
         free_map = -np.ones(2 * nn, np.int64); fdofs = np.where(act)[0]; free_map[fdofs] = np.arange(len(fdofs))
-        pat = _pattern(idx, nn, free_map)
+        pat = _pattern_struct(idx, nn, free_map, grid['nx']) if par.get('struct_pattern', True) else _pattern(idx, nn, free_map)
         fext = np.concatenate([mi * gx * fac, mi * gy * fac])[fdofs]
         # 细尺度小支撑节点外推约束（扩展 B 样条）：du_free = E du_red，K_red = Eᵀ K E
         E = None
@@ -127,9 +187,7 @@ def run_implicit(P, grid, par, solver='direct', precond_builder=None, verbose=Tr
             dX = (a22[:, None] * dNx - a21[:, None] * dNy) / Jr[:, None]
             dY = (-a12[:, None] * dNx + a11[:, None] * dNy) / Jr[:, None]
             lnJ = np.log(J)
-            vals = _tangent_vals(dX, dY, Jr * Vp0, lam / J, (mu - lam * lnJ) / J, s11, s12, s22)
-            data = np.bincount(pat['inv'], vals[pat['keep']], pat['nnz'])
-            K = sp.csr_matrix((data, pat['indices'], pat['indptr']), shape=(pat['nf'], pat['nf']))
+            K = assemble_tangent(pat, dX, dY, Jr * Vp0, lam / J, (mu - lam * lnJ) / J, s11, s12, s22)
             if E is not None:
                 K = (ET @ K @ E).tocsr()
             Rf_solve = Rr
