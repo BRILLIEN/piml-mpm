@@ -131,14 +131,24 @@ def main():
         ds = R['s'] - sref; w = P['V0']
         s_err = float(np.sqrt(np.sum(w * (ds[:, 0] ** 2 + 2 * ds[:, 1] ** 2 + ds[:, 2] ** 2)) /
                               np.sum(w * (sref[:, 0] ** 2 + 2 * sref[:, 1] ** 2 + sref[:, 2] ** 2))))
+        # 约定的应力精度口径（2026-11-23 确认）：按"初始构形细区间 h×h × 材料相"体积平均后的完整应力张量 L2 相对误差 ≤3%
+        # （去除 MPM 粒子级积分振荡；参考解自身粒子级粗糙度 ≈29%，任何约化模型都不应要求复现）
+        hh = cfg['h']; X0 = P['x']
+        key = (np.floor(X0[:, 0] / hh).astype(np.int64) * 100003 + np.floor(X0[:, 1] / hh).astype(np.int64)) * 4 + P['phase']
+        _, sinv = np.unique(key, return_inverse=True); wsum = np.bincount(sinv, w)
+        avg = lambda S: np.stack([np.bincount(sinv, w * S[:, k]) / wsum for k in range(3)], 1)
+        A_ref = avg(sref); dA = avg(R['s']) - A_ref
+        s_err_sp = float(np.sqrt(np.sum(wsum * (dA[:, 0] ** 2 + 2 * dA[:, 1] ** 2 + dA[:, 2] ** 2)) /
+                                 np.sum(wsum * (A_ref[:, 0] ** 2 + 2 * A_ref[:, 1] ** 2 + A_ref[:, 2] ** 2))))
         tip_err = float(abs(R['hist']['tip'][-1][1] - tipref[1]) / abs(tipref[1] - P['x'][par['monitor'][0], 1]))
         import resource
         out['runs'][name] = dict(maxrss_GB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, wall=wall, timing=R['timer'].t, newton=H['newton'].tolist(), lin_it=H['lin_it'].tolist(),
                                  ndof=H['ndof'].tolist(), tip=H['tip'].tolist(), Es=H['Es'].tolist(), x_rms_vs_first=err,
-                                 tip_err_vs_first=tip_err, stress_L2_vs_first=s_err)
+                                 tip_err_vs_first=tip_err, stress_L2_vs_first=s_err,
+                                 stress_L2_span_phase=s_err_sp)
         print(f'  总耗时 {wall:.2f}s，Newton 总数 {H["newton"].sum()}，线性迭代总数 {H["lin_it"].sum()}，'
               f'自由端最终 y = {H["tip"][-1][1]:.6f}，与首个求解器的粒子位置 RMS 差 {err:.2e}，自由端挠度相对误差 {tip_err:.4f}，'
-              f'应力 L2 误差 {s_err:.4f}，求解自由度 {int(np.mean(H["ndof"]))}')
+              f'应力 L2 误差（粒子级）{s_err:.4f}，应力 L2 误差（区间-相平均，阈值 3%）{s_err_sp:.4f}，求解自由度 {int(np.mean(H["ndof"]))}')
         np.savez(f'results/implicit/{tag}_{name}.npz', x=R['x'], s=R['s'], F=R['F'])
     # =================================================================
     # 四、数据整理
