@@ -64,7 +64,21 @@ def run_implicit_reduced(P, grid, par, n=8, basis='os', agg=1, edge_models=None,
         act = np.zeros(2 * nn, bool); act[np.concatenate([fi, fi + nn])] = True
         act[par['fixed_nodes']] = False; act[np.asarray(par['fixed_nodes']) + nn] = False
         fdofs = np.where(act)[0]
-        Pf = Phi[fdofs].tocsc(); nzc = np.where(np.asarray(abs(Pf).sum(0)).ravel() > 0)[0]
+        if par.get('rot_enrich', False):
+            # 有限转动缺陷增强：e = Φ·X_c − X（基对"恒等场"再现的缺陷），ψ_J = N_J^粗(x) e(x)。
+            # 增量刚体转动 u=(R−I)X = sinθ W X + (cosθ−1) X，前者由 Φ 精确再现，后者误差恰为 (cosθ−1) e ⇒ span{N_J e} 使缓变有限转动可精确表示。
+            from common.msbasis import coarse_global
+            cg_ = B['cg']; xc = cg_['xc']; xn = grid['xn']
+            ev = Phi @ np.concatenate([xc[:, 0], xc[:, 1]])
+            ex = ev[:nn] - xn[:, 0]; ey = ev[nn:] - xn[:, 1]
+            rowsum = np.asarray(abs(Phi).sum(1)).ravel(); live = (rowsum[:nn] > 0) | (rowsum[nn:] > 0)
+            ex[~live] = 0.0; ey[~live] = 0.0                       # 固定节点/无支撑节点不增强
+            Cq = coarse_global(grid, cg_, np.arange(nn), 'qbspline')
+            Psi = sp.vstack([sp.diags(ex) @ Cq, sp.diags(ey) @ Cq]).tocsr()
+            Phi = sp.hstack([Phi, Psi]).tocsr()
+        Pf = Phi[fdofs].tocsc()
+        cn = np.sqrt(np.asarray(Pf.multiply(Pf).sum(0)).ravel())
+        nzc = np.where(cn > 1e-8 * cn.max())[0]
         Pf = Pf[:, nzc].tocsr(); PfT = Pf.T.tocsr(); ncd = Pf.shape[1]
         # ---------- 积分聚合点 ----------
         T.tic('agg')

@@ -101,7 +101,7 @@ def main():
     os.makedirs('results/implicit', exist_ok=True)
     out = dict(cfg={k: v for k, v in cfg.items()}, Np=len(P['m']), runs={})
     print(f'[I-beam] Np={len(P["m"])}，网格节点={grid["nn"]}，载荷步={a.nload}，粗化比={a.n}')
-    xref = None; tipref = None
+    xref = None; tipref = None; sref = None
     for name in a.solvers:
         print(f'===== {name} =====')
         t0 = time.perf_counter()
@@ -112,8 +112,9 @@ def main():
             if '_piml' in name:
                 from ml.train_edge import PIMLEdge
                 em = {e: PIMLEdge(f'ml/models/edge_n{a.n}_{e}_c100.npz') for e in 'xy'}
-            R = run_implicit_reduced(P, grid, par, n=a.n, basis='ms' if name.startswith('red_ms') else 'os',
-                                     agg=1 if ('_agg' in name) else 0, edge_models=em, direct_coarse=name.endswith('_dc'))
+            par_r = dict(par, rot_enrich='_rot' in name)
+            R = run_implicit_reduced(P, grid, par_r, n=a.n, basis='ms' if name.startswith('red_ms') else 'os',
+                                     agg=1 if ('_agg' in name) else 0, edge_models=em, direct_coarse=name.endswith('_dc'))  # 名称含 _rot：有限转动缺陷增强
             R['hist']['lin_it'] = np.zeros_like(R['hist']['newton']); R['hist']['Es'] = np.zeros(len(R['hist']['newton']))
         else:
             solver, pb, extra = solver_setup(name, cfg)
@@ -125,15 +126,19 @@ def main():
             xref = R['x']
         err = float(np.sqrt(np.mean(np.sum((R['x'] - xref) ** 2, 1))))
         if tipref is None:
-            tipref = H_tip0 = R['hist']['tip'][-1].copy()
+            tipref = H_tip0 = R['hist']['tip'][-1].copy(); sref = R['s'].copy()
+        # 完整应力张量体积加权 L2 相对误差（σxx, σxy(×2 计), σyy）
+        ds = R['s'] - sref; w = P['V0']
+        s_err = float(np.sqrt(np.sum(w * (ds[:, 0] ** 2 + 2 * ds[:, 1] ** 2 + ds[:, 2] ** 2)) /
+                              np.sum(w * (sref[:, 0] ** 2 + 2 * sref[:, 1] ** 2 + sref[:, 2] ** 2))))
         tip_err = float(abs(R['hist']['tip'][-1][1] - tipref[1]) / abs(tipref[1] - P['x'][par['monitor'][0], 1]))
         import resource
         out['runs'][name] = dict(maxrss_GB=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6, wall=wall, timing=R['timer'].t, newton=H['newton'].tolist(), lin_it=H['lin_it'].tolist(),
                                  ndof=H['ndof'].tolist(), tip=H['tip'].tolist(), Es=H['Es'].tolist(), x_rms_vs_first=err,
-                                 tip_err_vs_first=tip_err)
+                                 tip_err_vs_first=tip_err, stress_L2_vs_first=s_err)
         print(f'  总耗时 {wall:.2f}s，Newton 总数 {H["newton"].sum()}，线性迭代总数 {H["lin_it"].sum()}，'
               f'自由端最终 y = {H["tip"][-1][1]:.6f}，与首个求解器的粒子位置 RMS 差 {err:.2e}，自由端挠度相对误差 {tip_err:.4f}，'
-              f'求解自由度 {int(np.mean(H["ndof"]))}')
+              f'应力 L2 误差 {s_err:.4f}，求解自由度 {int(np.mean(H["ndof"]))}')
         np.savez(f'results/implicit/{tag}_{name}.npz', x=R['x'], s=R['s'], F=R['F'])
     # =================================================================
     # 四、数据整理
