@@ -141,7 +141,9 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
         own = (grid['node'][active[in_]] - shift) // p['fine']
         nblk = np.ceil(grid['dims'] / p['fine']).astype(np.int64) + 1
         return db_, di_, Nb_, np.repeat(own[:, 0] + nblk[0] * (own[:, 1] + nblk[1] * own[:, 2]), 3)
-    base_mode = mode.replace('_loose', '')
+    base_mode = mode.replace('_loose', '').replace('_frozen', '')
+    frozen = '_frozen' in mode               # 步内冻结一致切线（每步只组装一次；残余力始终精确）
+    K = None
     if base_mode in ('sub_current', 'subpc', 'subpc2', 'subpc3'):
         t = time.perf_counter()
         db, di, Nb, blockID = trace(0)
@@ -165,14 +167,15 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
             ref = max(solveNorm, 1e-300); fullRef = max(fullNorm, 1e-300)
         res.append((it, solveNorm, solveNorm / ref, fullNorm, fullNorm / fullRef))
         timer['resid_const'] += time.perf_counter() - t
-        ntol = p.get('looseTol', p['newtonTol']) if mode.endswith('_loose') else p['newtonTol']   # 精度受控（宽松 Newton 容差）变体
+        ntol = p.get('looseTol', p['newtonTol']) if '_loose' in mode else p['newtonTol']   # 精度受控（宽松 Newton 容差）变体
         if solveNorm <= max(ntol * ref, p['absTol']):
             break
         assert it < 40, f'Newton stagnation {mode} step {step}'
         # ---------- 当轮一致切线 ----------
-        t = time.perf_counter()
-        K = beam_tangent(patch, T, gamma, grid, pat, inertia)
-        timer['tangent'] += time.perf_counter() - t
+        if K is None or not frozen:
+            t = time.perf_counter()
+            K = beam_tangent(patch, T, gamma, grid, pat, inertia)
+            timer['tangent'] += time.perf_counter() - t
         if base_mode in ('fine_pcg', 'fine_pcg_inexact'):
             t = time.perf_counter()
             df, nit = solve_pcg_beam(K, K.diagonal(), r, tol=(p.get('subpc_tol', 3e-10) if base_mode == 'fine_pcg_inexact' else 3e-10))
