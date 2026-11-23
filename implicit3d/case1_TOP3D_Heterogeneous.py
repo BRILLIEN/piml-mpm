@@ -33,13 +33,15 @@ def main():
     ap.add_argument('--steps', type=int, default=6)
     ap.add_argument('--modes', nargs='+', default=['fine_pcg', 'sub_current', 'subpc'])
     ap.add_argument('--omega', type=float, default=1.0)
+    ap.add_argument('--subpc_tol', type=float, default=3e-10, help='子结构预条件细空间 PCG 的线性相对容差（非精确 Newton）')
     ap.add_argument('--tag', default='')
     a = ap.parse_args()
     # ============ 一、基础条件设置 ============
     Nelx, Nely, Nelz = a.Nel; fine = a.fine
     p = dict(cells=[Nelx * fine, Nely * fine, Nelz * fine], fine=fine, h=a.h, ppc=2, pad=[5, 5, 5],
              E=1e5, Einclusion=1e2, nu=0.30, rho=10.0, gravity=np.array([0.0, -25.0, 0.0]),
-             dt=a.dt, steps=a.steps, newtonTol=1e-8, absTol=1e-9, activeTol=1e-12, omega=a.omega)
+             dt=a.dt, steps=a.steps, newtonTol=1e-8, absTol=1e-9, activeTol=1e-12, omega=a.omega,
+             subpc_tol=a.subpc_tol)
     print(f'本构：可压缩 Neo-Hookean（E={p["E"]:.0e}，软夹杂 E={p["Einclusion"]:.0e}，ν={p["nu"]}），ρ={p["rho"]}，重力 {p["gravity"][1]}')
     print(f'求解：隐式平均加速度 Newmark，Δt={p["dt"]}，{p["steps"]} 步；逐轮一致切线；Newton 相对容差 {p["newtonTol"]}；'
           f'PCG 相对容差 3e-10；子结构 {Nelx}×{Nely}×{Nelz}，每块 {fine}³ 细单元，细格 h={p["h"]}；单线程')

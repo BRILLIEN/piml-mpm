@@ -15,7 +15,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import splu, cg, LinearOperator
 from implicit3d.beam_kernels import (beam_basis, beam_transfer, beam_neo, beam_tangent_pattern, beam_tangent,
-                                     BasicMat_trace)
+                                     BasicMat_trace, overlap_patches)
 
 
 def solve_pcg_beam(A, diagonal, b, tol=3e-10, maxit=20000):
@@ -141,7 +141,7 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
         own = (grid['node'][active[in_]] - shift) // p['fine']
         nblk = np.ceil(grid['dims'] / p['fine']).astype(np.int64) + 1
         return db_, di_, Nb_, np.repeat(own[:, 0] + nblk[0] * (own[:, 1] + nblk[1] * own[:, 2]), 3)
-    if mode in ('sub_current', 'subpc', 'subpc2'):
+    if mode in ('sub_current', 'subpc', 'subpc2', 'subpc3'):
         t = time.perf_counter()
         db, di, Nb, blockID = trace(0)
         if mode == 'subpc2':
@@ -171,18 +171,36 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
         t = time.perf_counter()
         K = beam_tangent(patch, T, gamma, grid, pat, inertia)
         timer['tangent'] += time.perf_counter() - t
-        if mode == 'fine_pcg':
+        if mode in ('fine_pcg', 'fine_pcg_inexact'):
             t = time.perf_counter()
-            df, nit = solve_pcg_beam(K, K.diagonal(), r)
+            df, nit = solve_pcg_beam(K, K.diagonal(), r, tol=(p.get('subpc_tol', 3e-10) if mode == 'fine_pcg_inexact' else 3e-10))
             timer['pcg'] += time.perf_counter() - t
         else:
             cond = Condense(K, di, db, Nb, blockID, timer)
             if mode == 'sub_current':
                 df = cond.apply(r); nit = 0
             else:
-                if mode == 'subpc2':                      # 两个错位分区的子结构凝聚算子加性组合（对称正定）
+                if mode == 'subpc3':                      # 子结构凝聚（粗）+ 重叠 3×3×3 节点块精确局部解（加性两级 Schwarz）
+                    t = time.perf_counter()
+                    OP = overlap_patches(grid, active, pat, inertia)
+                    timer['local_factor'] += time.perf_counter() - t
+                    dofp = OP['dof']; vm = dofp >= 0; dsafe = np.maximum(dofp, 0); Kinv = OP['Kinv']
+
+                    def Mfun(z):
+                        t0 = time.perf_counter()
+                        zz = np.where(vm, z[dsafe], 0.0)
+                        y = np.einsum('pij,pj->pi', Kinv, zz)
+                        out = np.bincount(dsafe[vm], y[vm], z.size)
+                        timer['recover'] += time.perf_counter() - t0
+                        return out + cond.apply(z)
+                    M = LinearOperator(K.shape, matvec=Mfun)
+                elif mode == 'subpc2':                      # 两个错位分区的子结构凝聚算子加性组合（对称正定）
                     cond2 = Condense(K, di2, db2, Nb2, blockID2, timer)
-                    M = LinearOperator(K.shape, matvec=lambda z: cond.apply(z) + cond2.apply(z))
+                    # 三维中"在两个分区里都不是块内部"的节点（如 x 位于界面层且 y 位于另一分区界面层）只受两个三线性界面约束，
+                    # 加性组合在其上奇异 ⇒ 对这些自由度再加 Jacobi 项，保证预条件器对称正定。
+                    unc = np.ones(r.size, bool); unc[di] = False; unc[di2] = False
+                    Du = np.where(unc, 1.0 / K.diagonal(), 0.0)
+                    M = LinearOperator(K.shape, matvec=lambda z: cond.apply(z) + cond2.apply(z) + Du * z)
                 else:
                     Db = np.zeros(r.size); Db[db] = 1.0 / K.diagonal()[db]
                     w = p.get('omega', 1.0)
@@ -221,7 +239,7 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
     t = time.perf_counter()
     s['x'] = s['x'] + dx; s['v'] = v; s['C'] = C; s['F'] = F; s['W'] = W; s['sig'] = sigma
     t_upd = time.perf_counter() - t
-    row = dict(step=step, nfree=free.size, nglobal=(Nb.shape[1] if mode != 'fine_pcg' else free.size),
+    row = dict(step=step, nfree=free.size, nglobal=(Nb.shape[1] if mode.startswith('sub') else free.size),
                newton=len(res) - 1, pcg_it=nit_total, p2g=t_p2g, implicit=t_imp, g2p=t_g2p, update=t_upd,
                total=time.perf_counter() - tstep, res=res, **timer)
     if show:

@@ -221,7 +221,7 @@ def beam_tangent_pattern(grid, active):
                 nnz=int(indptr[-1]))
 
 
-def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):
+def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):  # noqa
     """组装活动自由度上的有效切线 K_eff = K_tan + diag(inertia)（CSR，对称）。逐块（≤chunk 个支撑单元）积分并直接累加到 CSR 数据。"""
     dims = grid['dims']; amap = pat['amap']; posmap = pat['posmap']
     data = np.zeros(pat['nnz'])
@@ -246,7 +246,37 @@ def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):
             vals = Ke.reshape(-1, 27, 3, 27, 3).transpose(1, 2, 3, 4, 0)        # (27,3,27,3,nc)
             data += np.bincount(pos[m], vals[m], pat['nnz'])
     K = sp.csr_matrix((data, pat['indices'], pat['indptr']), shape=(pat['nfree'], pat['nfree']))
+    pat['last_data'] = data                                      # 不含惯性项的切线数据（供重叠块直接取子矩阵）
     return K + sp.diags(inertia)
+
+
+def overlap_patches(grid, active, pat, inertia, stride=2, size=3):
+    """重叠局部块：以偶数坐标节点为起点的 size³ 节点盒（stride=2 ⇒ 相邻块重叠 1 层，覆盖全部活动节点）。
+    直接从结构化 CSR 数据按 (行, 分量, 模板偏移) 取 81×81 子矩阵（加惯性对角），批量求逆。
+    返回 dict(dof (npatch, 3*size³) 活动自由度编号（缺失为 -1）, Kinv (npatch, n, n))。"""
+    dims = grid['dims']; amap = pat['amap']; posmap = pat['posmap']; data = pat['last_data']
+    xyz = grid['node'][active]
+    starts = xyz[np.all(xyz % stride == 0, 1)]
+    # 也包含被盒子截断的边缘：以每个活动节点向下取整到 stride 的起点
+    starts = np.unique((xyz // stride) * stride, axis=0)
+    o = np.arange(size ** 3); loc = np.stack([o % size, (o // size) % size, o // size ** 2], 1)
+    nodes_xyz = starts[:, None, :] + loc[None]                                  # (np, size³, 3)
+    inside = np.all(nodes_xyz < dims, 2)
+    stride_v = np.array([1, dims[0], dims[0] * dims[1]])
+    gnode = np.where(inside, np.minimum(nodes_xyz, dims - 1) @ stride_v, 0)
+    an = np.where(inside, amap[gnode], -1)                                      # (np, m)
+    keep = np.any(an >= 0, 1); an = an[keep]; nodes_xyz = nodes_xyz[keep]
+    npch, m = an.shape
+    dof = np.where(an[:, :, None] >= 0, 3 * an[:, :, None] + np.arange(3), -1).reshape(npch, 3 * m)
+    d = nodes_xyz[:, None, :, :] - nodes_xyz[:, :, None, :] + 2                 # (np, a, b, 3) 列节点 b 相对行节点 a
+    off = d[..., 0] + 5 * d[..., 1] + 25 * d[..., 2]
+    row = np.where(an >= 0, 3 * an, 0)[:, :, None] + np.arange(3)                # (np, a, i)
+    pos = posmap[row[:, :, :, None, None], np.arange(3)[None, None, None, None, :], off[:, :, None, :, None]]  # (np,a,i,b,k)
+    ok = (an[:, :, None, None, None] >= 0) & (an[:, None, None, :, None] >= 0) & (pos >= 0)
+    Kp = np.where(ok, data[np.maximum(pos, 0)], 0.0).reshape(npch, 3 * m, 3 * m)
+    dg = np.where(dof >= 0, inertia[np.maximum(dof, 0)], 1.0)                    # 缺失自由度置单位对角
+    Kp[:, np.arange(3 * m), np.arange(3 * m)] += dg
+    return dict(dof=dof, Kinv=np.linalg.inv(Kp))
 
 
 # ----------------------------------------------------------------------------- 三线性粗界面
