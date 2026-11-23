@@ -141,10 +141,11 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
         own = (grid['node'][active[in_]] - shift) // p['fine']
         nblk = np.ceil(grid['dims'] / p['fine']).astype(np.int64) + 1
         return db_, di_, Nb_, np.repeat(own[:, 0] + nblk[0] * (own[:, 1] + nblk[1] * own[:, 2]), 3)
-    if mode in ('sub_current', 'subpc', 'subpc2', 'subpc3'):
+    base_mode = mode.replace('_loose', '')
+    if base_mode in ('sub_current', 'subpc', 'subpc2', 'subpc3'):
         t = time.perf_counter()
         db, di, Nb, blockID = trace(0)
-        if mode == 'subpc2':
+        if base_mode == 'subpc2':
             db2, di2, Nb2, blockID2 = trace(2)            # 错位 2 个细节点的第二分区：原界面两层落入其块内部
         timer['trace'] += time.perf_counter() - t
     res = []; nit_total = 0
@@ -156,7 +157,7 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
         fint = beam_transfer('force', patch, grid, s, P, h=h)
         r = drive - fint[:, active].ravel(order='F') - inertia * U.reshape(3, -1, order='F')[:, active].ravel(order='F')
         fullNorm = np.linalg.norm(r)
-        if mode == 'sub_current':
+        if base_mode == 'sub_current':
             f = np.r_[r[di], Nb.T @ r[db]]; solveNorm = np.linalg.norm(f)
         else:
             solveNorm = fullNorm
@@ -164,23 +165,24 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
             ref = max(solveNorm, 1e-300); fullRef = max(fullNorm, 1e-300)
         res.append((it, solveNorm, solveNorm / ref, fullNorm, fullNorm / fullRef))
         timer['resid_const'] += time.perf_counter() - t
-        if solveNorm <= max(p['newtonTol'] * ref, p['absTol']):
+        ntol = p.get('looseTol', p['newtonTol']) if mode.endswith('_loose') else p['newtonTol']   # 精度受控（宽松 Newton 容差）变体
+        if solveNorm <= max(ntol * ref, p['absTol']):
             break
         assert it < 40, f'Newton stagnation {mode} step {step}'
         # ---------- 当轮一致切线 ----------
         t = time.perf_counter()
         K = beam_tangent(patch, T, gamma, grid, pat, inertia)
         timer['tangent'] += time.perf_counter() - t
-        if mode in ('fine_pcg', 'fine_pcg_inexact'):
+        if base_mode in ('fine_pcg', 'fine_pcg_inexact'):
             t = time.perf_counter()
-            df, nit = solve_pcg_beam(K, K.diagonal(), r, tol=(p.get('subpc_tol', 3e-10) if mode == 'fine_pcg_inexact' else 3e-10))
+            df, nit = solve_pcg_beam(K, K.diagonal(), r, tol=(p.get('subpc_tol', 3e-10) if base_mode == 'fine_pcg_inexact' else 3e-10))
             timer['pcg'] += time.perf_counter() - t
         else:
             cond = Condense(K, di, db, Nb, blockID, timer)
-            if mode == 'sub_current':
+            if base_mode == 'sub_current':
                 df = cond.apply(r); nit = 0
             else:
-                if mode == 'subpc3':                      # 子结构凝聚（粗）+ 重叠 3×3×3 节点块精确局部解（加性两级 Schwarz）
+                if base_mode == 'subpc3':                      # 子结构凝聚（粗）+ 重叠 3×3×3 节点块精确局部解（加性两级 Schwarz）
                     t = time.perf_counter()
                     OP = overlap_patches(grid, active, pat, inertia)
                     timer['local_factor'] += time.perf_counter() - t
@@ -194,7 +196,7 @@ def implicit_step_heterogeneous(s, cache, grid, p, mode, step, show):
                         timer['recover'] += time.perf_counter() - t0
                         return out + cond.apply(z)
                     M = LinearOperator(K.shape, matvec=Mfun)
-                elif mode == 'subpc2':                      # 两个错位分区的子结构凝聚算子加性组合（对称正定）
+                elif base_mode == 'subpc2':                      # 两个错位分区的子结构凝聚算子加性组合（对称正定）
                     cond2 = Condense(K, di2, db2, Nb2, blockID2, timer)
                     # 三维中"在两个分区里都不是块内部"的节点（如 x 位于界面层且 y 位于另一分区界面层）只受两个三线性界面约束，
                     # 加性组合在其上奇异 ⇒ 对这些自由度再加 Jacobi 项，保证预条件器对称正定。
