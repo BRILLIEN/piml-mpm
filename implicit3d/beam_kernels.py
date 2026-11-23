@@ -172,19 +172,24 @@ def beam_neo(F, grid, energyOnly=False):
 # ----------------------------------------------------------------------------- 一致切线（细尺度）
 def beam_cell_tangent(B, T, gamma, grid):
     """一个 patch 内各支撑单元的 81×81 一致材料切线（自由度顺序 3*a+i）：
-    K_(a,i),(b,k) = Σ_p V[ μ δ_ik G_a·G_b + λ H_ai H_bk + γ H_bi H_ak ]，H_ai = Σ_J T_iJ G_aJ。"""
+    K_(a,i),(b,k) = Σ_p V[ μ δ_ik G_a·G_b + λ H_ai H_bk + γ H_bi H_ak ]，H_ai = Σ_J T_iJ G_aJ。
+    三项都写成单元内粒子维的批量矩阵乘（BLAS，对应 MATLAB pagemtimes）。"""
     ids = B['id']; nq, nc = ids.shape
     G = B['G']                                                                    # (3,nq,27,nc)
-    H = np.einsum('iJqn,Jqan->qnai', T[:, :, ids], G)                             # (nq,nc,27,3)
-    V = grid['V'][ids]
-    wl = V * grid['lambda'][ids]; wg = V * gamma[ids]; wm = V * grid['mu'][ids]   # (nq,nc)
-    h = H.reshape(nq, nc, 81)                                                     # (3a+i)
-    A = np.einsum('qn,qnr,qns->nrs', wl, h, h)                                    # λ 项
-    D = np.einsum('qn,qnai,qnbk->naibk', wg, H, H)                                # γ：H_ai H_bk → 需要 H_bi H_ak
-    D = D.transpose(0, 3, 2, 1, 4).reshape(nc, 81, 81)                            # (b,i,a,k)→ 行(a,i) 列(b,k) 取 H_bi H_ak
-    Mg = np.einsum('qn,jqan,jqbn->nab', wm, G, G)                                 # μ G_a·G_b
-    K = A + D
-    K4 = K.reshape(nc, 27, 3, 27, 3)
+    Gt = np.ascontiguousarray(G.transpose(3, 1, 2, 0))                            # (nc,nq,27,3) = G_aJ
+    Tt = np.ascontiguousarray(T[:, :, ids].transpose(3, 2, 0, 1))                 # (nc,nq,3,3) = T_iJ
+    H = np.matmul(Gt, Tt.transpose(0, 1, 3, 2))                                   # (nc,nq,27,3): H_ai = Σ_J G_aJ T_iJ
+    h = H.reshape(nc, nq, 81)
+    V = grid['V'][ids].T                                                          # (nc,nq)
+    wl = (V * grid['lambda'][ids].T)[:, :, None]; wg = (V * gamma[ids].T)[:, :, None]
+    wm = (V * grid['mu'][ids].T)[:, :, None, None]
+    ht = h.transpose(0, 2, 1)                                                     # (nc,81,nq)
+    A = np.matmul(ht, h * wl)                                                     # λ：H_ai H_bk
+    Dg = np.matmul(ht, h * wg).reshape(nc, 27, 3, 27, 3)                          # Σ wg H_ak' H_bi' 记为 [(a,i'),(b,k')]
+    D = Dg.transpose(0, 1, 4, 3, 2).reshape(nc, 81, 81)                           # 交换 i 与 k ⇒ H_bi H_ak
+    g2 = Gt.transpose(0, 2, 1, 3).reshape(nc, 27, nq * 3)                         # (nc,27,(q,J))
+    Mg = np.matmul(g2, (Gt * wm).transpose(0, 1, 3, 2).reshape(nc, nq * 3, 27))   # μ G_a·G_b
+    K4 = (A + D).reshape(nc, 27, 3, 27, 3)
     for i in range(3):
         K4[:, :, i, :, i] += Mg
     return K4.reshape(nc, 81, 81)
@@ -226,25 +231,31 @@ def beam_tangent(patch, T, gamma, grid, pat, inertia, chunk=1024):  # noqa
     dims = grid['dims']; amap = pat['amap']; posmap = pat['posmap']
     data = np.zeros(pat['nnz'])
     nodexyz = grid['node']
-    for B in patch:
+    cache = pat.setdefault('pos_cache', {})                                    # 步内粒子分组不变 ⇒ 位置映射每步只算一次
+    for ib, B in enumerate(patch):
         nc_all = B['id'].shape[1]
         for c0 in range(0, nc_all, chunk):
             cs = slice(c0, min(c0 + chunk, nc_all))
             Bc = dict(id=B['id'][:, cs], G=B["G"][..., cs])
             Ke = beam_cell_tangent(Bc, T, gamma, grid)                          # (nc,81,81)
-            nodes = B['node'][:, cs]                                            # (27,nc)
-            an = amap[nodes]
-            xyz = nodexyz[nodes]                                                # (27,nc,3)
-            dlt = xyz[None, :, :, :] - xyz[:, None, :, :] + 2                   # (27a,27b,nc,3)：列节点 b 相对行节点 a
-            off = dlt[..., 0] + 5 * dlt[..., 1] + 25 * dlt[..., 2]              # (27,27,nc)
-            row = 3 * an[:, None, :] + np.arange(3)[None, :, None]              # (27,3,nc)
-            valid_r = an >= 0; valid_c = an >= 0
-            r_ = np.where(valid_r[:, None, :], row, 0)
-            # pos[a,i,b,k,n] = posmap[row(a,i), k, off(a,b)]
-            pos = posmap[r_[:, :, None, None, :], np.arange(3)[None, None, None, :, None], off[:, None, :, None, :]]
-            m = valid_r[:, None, None, None, :] & valid_c[None, None, :, None, :] & (pos >= 0)
-            vals = Ke.reshape(-1, 27, 3, 27, 3).transpose(1, 2, 3, 4, 0)        # (27,3,27,3,nc)
-            data += np.bincount(pos[m], vals[m], pat['nnz'])
+            key = (ib, c0)
+            if key not in cache:
+                nodes = B['node'][:, cs]                                        # (27,nc)
+                an = amap[nodes]
+                xyz = nodexyz[nodes]                                            # (27,nc,3)
+                dlt = xyz[None, :, :, :] - xyz[:, None, :, :] + 2               # (27a,27b,nc,3)：列节点 b 相对行节点 a
+                off = dlt[..., 0] + 5 * dlt[..., 1] + 25 * dlt[..., 2]          # (27,27,nc)
+                row = 3 * an[:, None, :] + np.arange(3)[None, :, None]          # (27,3,nc)
+                valid = an >= 0
+                r_ = np.where(valid[:, None, :], row, 0)
+                pos = posmap[r_[:, :, None, None, :], np.arange(3)[None, None, None, :, None], off[:, None, :, None, :]]
+                m = valid[:, None, None, None, :] & valid[None, None, :, None, :] & (pos >= 0)
+                m = m.transpose(4, 0, 1, 2, 3).reshape(-1)                      # 与 Ke (nc,a,i,b,k) 内存顺序对齐
+                pos = pos.transpose(4, 0, 1, 2, 3).reshape(-1)
+                sel = np.flatnonzero(m)
+                cache[key] = (sel, pos[sel].astype(np.int32))
+            sel, ps = cache[key]
+            data += np.bincount(ps, Ke.reshape(-1)[sel], pat['nnz'])
     K = sp.csr_matrix((data, pat['indices'], pat['indptr']), shape=(pat['nfree'], pat['nfree']))
     pat['last_data'] = data                                      # 不含惯性项的切线数据（供重叠块直接取子矩阵）
     return K + sp.diags(inertia)
@@ -305,3 +316,25 @@ def BasicMat_trace(node, active, fixed, dims, fine, shift=0):
     # 截断导致的线性相关列：用列 Gram 矩阵的对角主元检查（与 MATLAB 版本 QR 去冗余等价的简化：去除近零范数列）
     N = sp.kron(Q, sp.identity(3)).tocsr()
     return dof_b, dof_i, N, b, i
+
+
+def beam_cell_tangent_ref(B, T, gamma, grid):
+    """一个 patch 内各支撑单元的 81×81 一致材料切线（自由度顺序 3*a+i）：
+    K_(a,i),(b,k) = Σ_p V[ μ δ_ik G_a·G_b + λ H_ai H_bk + γ H_bi H_ak ]，H_ai = Σ_J T_iJ G_aJ。"""
+    ids = B['id']; nq, nc = ids.shape
+    G = B['G']                                                                    # (3,nq,27,nc)
+    H = np.einsum('iJqn,Jqan->qnai', T[:, :, ids], G)                             # (nq,nc,27,3)
+    V = grid['V'][ids]
+    wl = V * grid['lambda'][ids]; wg = V * gamma[ids]; wm = V * grid['mu'][ids]   # (nq,nc)
+    h = H.reshape(nq, nc, 81)                                                     # (3a+i)
+    A = np.einsum('qn,qnr,qns->nrs', wl, h, h)                                    # λ 项
+    D = np.einsum('qn,qnai,qnbk->naibk', wg, H, H)                                # γ：H_ai H_bk → 需要 H_bi H_ak
+    D = D.transpose(0, 3, 2, 1, 4).reshape(nc, 81, 81)                            # (b,i,a,k)→ 行(a,i) 列(b,k) 取 H_bi H_ak
+    Mg = np.einsum('qn,jqan,jqbn->nab', wm, G, G)                                 # μ G_a·G_b
+    K = A + D
+    K4 = K.reshape(nc, 27, 3, 27, 3)
+    for i in range(3):
+        K4[:, :, i, :, i] += Mg
+    return K4.reshape(nc, 81, 81)
+
+
